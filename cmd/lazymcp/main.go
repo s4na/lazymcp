@@ -78,7 +78,9 @@ func newRootCommand() *cobra.Command {
 
 	root.AddCommand(&cobra.Command{
 		Use:   "inspect",
-		Short: "Show configured backend servers and lifecycle state",
+		Short: "Show configured backend servers with initial lifecycle columns",
+		Long: "Show configured backend servers with lifecycle columns for this inspect process.\n" +
+			"Standalone inspect cannot read live in-memory state from an already-running lazymcp serve session.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(configPath)
 			if err != nil {
@@ -87,7 +89,7 @@ func newRootCommand() *cobra.Command {
 			manager := backend.NewManager(os.Stderr)
 			states := manager.States(cfg.ServerNames())
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "NAME\tNAMESPACE\tSTATUS\tLAST_STARTED\tLAST_STOPPED\tSTOP_REASON\tLAST_ERROR\tCOMMAND")
+			fmt.Fprintln(w, "NAME\tNAMESPACE\tSTATUS\tLAST_STARTED\tLAST_STOPPED\tSTOP_REASON\tLAST_ERROR\tCOMMAND_LINE")
 			for _, name := range cfg.ServerNames() {
 				srv := cfg.Servers[name]
 				state := states[name]
