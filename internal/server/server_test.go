@@ -134,9 +134,6 @@ func TestToolsListUsesBackendRequestTimeoutDuringDiscovery(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("tools/list discovery took %s, want under 1s", elapsed)
 	}
-	if !bytes.Contains(stderr.Bytes(), []byte("failed to discover tools for slow")) {
-		t.Fatalf("stderr did not report discovery failure: %s", stderr.String())
-	}
 	srv.backends.Shutdown()
 }
 

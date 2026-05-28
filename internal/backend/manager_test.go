@@ -75,6 +75,16 @@ func TestManagerDiscoversPaginatedBackendTools(t *testing.T) {
 	manager.Shutdown()
 }
 
+func TestManagerRejectsRepeatedToolsListCursor(t *testing.T) {
+	startCountPath := t.TempDir() + "/starts"
+	manager := NewManager(os.Stderr)
+	_, listErr := manager.ListTools(context.Background(), "test", helperServerWithEnv(startCountPath, "LAZYMCP_REPEATED_CURSOR=1"), nil)
+	if listErr == nil || listErr.Message != "backend returned repeated tools/list cursor" {
+		t.Fatalf("list error = %#v, want repeated cursor error", listErr)
+	}
+	manager.Shutdown()
+}
+
 func TestIDsEqualSupportsStringIDs(t *testing.T) {
 	if !idsEqual("42", "42") {
 		t.Fatalf("expected string ID to match")
@@ -199,6 +209,13 @@ func TestHelperProcess(t *testing.T) {
 						"inputSchema": map[string]any{"type": "object"},
 					},
 				}}))
+				continue
+			}
+			if os.Getenv("LAZYMCP_REPEATED_CURSOR") == "1" {
+				_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{
+					"tools":      []map[string]any{},
+					"nextCursor": "same",
+				}))
 				continue
 			}
 			_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{"tools": []map[string]any{

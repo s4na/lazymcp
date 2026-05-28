@@ -276,6 +276,7 @@ func (p *Process) Call(ctx context.Context, toolName string, args json.RawMessag
 func (p *Process) ListTools(ctx context.Context) ([]config.Tool, *mcp.Error) {
 	var tools []config.Tool
 	var cursor *string
+	seenCursors := map[string]bool{}
 	for {
 		page, nextCursor, listErr := p.listToolsPage(ctx, cursor)
 		if listErr != nil {
@@ -285,6 +286,10 @@ func (p *Process) ListTools(ctx context.Context) ([]config.Tool, *mcp.Error) {
 		if nextCursor == nil {
 			return tools, nil
 		}
+		if seenCursors[*nextCursor] {
+			return nil, &mcp.Error{Code: -32000, Message: "backend returned repeated tools/list cursor"}
+		}
+		seenCursors[*nextCursor] = true
 		cursor = nextCursor
 	}
 }
