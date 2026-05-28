@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/s4na/lazymcp/internal/backend"
 	"github.com/s4na/lazymcp/internal/config"
@@ -13,19 +14,23 @@ import (
 )
 
 type Server struct {
-	cfg        *config.Config
-	codec      *mcp.Codec
-	backends   *backend.Manager
-	stderr     io.Writer
-	initParams json.RawMessage
+	cfg                    *config.Config
+	codec                  *mcp.Codec
+	backends               *backend.Manager
+	stderr                 io.Writer
+	initParams             json.RawMessage
+	toolDiscoveryAttempted map[string]bool
 }
+
+const toolDiscoveryTimeout = 30 * time.Second
 
 func New(cfg *config.Config, stdin io.Reader, stdout io.Writer, stderr io.Writer) *Server {
 	return &Server{
-		cfg:      cfg,
-		codec:    mcp.NewCodec(stdin, stdout),
-		backends: backend.NewManager(stderr),
-		stderr:   stderr,
+		cfg:                    cfg,
+		codec:                  mcp.NewCodec(stdin, stdout),
+		backends:               backend.NewManager(stderr),
+		stderr:                 stderr,
+		toolDiscoveryAttempted: map[string]bool{},
 	}
 }
 
@@ -75,10 +80,13 @@ func (s *Server) handle(ctx context.Context, msg mcp.Message) error {
 func (s *Server) discoverUnconfiguredTools(ctx context.Context) {
 	for _, name := range s.cfg.ServerNames() {
 		srv := s.cfg.Servers[name]
-		if len(srv.Tools) > 0 {
+		if len(srv.Tools) > 0 || s.toolDiscoveryAttempted[name] {
 			continue
 		}
-		tools, listErr := s.backends.ListTools(ctx, name, srv, s.initParams)
+		s.toolDiscoveryAttempted[name] = true
+		discoveryCtx, cancel := context.WithTimeout(ctx, toolDiscoveryTimeout)
+		tools, listErr := s.backends.ListTools(discoveryCtx, name, srv, s.initParams)
+		cancel()
 		if listErr != nil {
 			fmt.Fprintf(s.stderr, "lazymcp: failed to discover tools for %s: %s\n", name, listErr.Message)
 			continue

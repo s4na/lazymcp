@@ -60,6 +60,58 @@ func TestToolsListDiscoversUnconfiguredBackendTools(t *testing.T) {
 	srv.backends.Shutdown()
 }
 
+func TestToolsListDoesNotRediscoverEmptyBackendTools(t *testing.T) {
+	dir := t.TempDir()
+	startCountPath := filepath.Join(dir, "starts")
+	listCountPath := filepath.Join(dir, "lists")
+	cfg := &config.Config{Servers: map[string]config.Server{
+		"empty": helperServerWithEnv(startCountPath, "LAZYMCP_EMPTY_TOOLS=1", "LAZYMCP_LIST_COUNT_PATH="+listCountPath),
+	}}
+	if err := cfg.SetServerTools("empty", nil); err != nil {
+		t.Fatalf("initialize config routes: %v", err)
+	}
+
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	srv := New(cfg, bytes.NewReader(nil), &out, &stderr)
+	if err := srv.handle(context.Background(), mcp.Message{JSONRPC: "2.0", ID: "1", Method: "tools/list"}); err != nil {
+		t.Fatalf("first tools/list: %v", err)
+	}
+	if err := srv.handle(context.Background(), mcp.Message{JSONRPC: "2.0", ID: "2", Method: "tools/list"}); err != nil {
+		t.Fatalf("second tools/list: %v", err)
+	}
+
+	if got := readCount(t, listCountPath); got != 1 {
+		t.Fatalf("backend tools/list calls = %d, want 1", got)
+	}
+	srv.backends.Shutdown()
+}
+
+func TestToolsListUsesBackendRequestTimeoutDuringDiscovery(t *testing.T) {
+	startCountPath := filepath.Join(t.TempDir(), "starts")
+	slow := helperServerWithEnv(startCountPath, "LAZYMCP_SLEEP_ON_LIST=1")
+	slow.RequestTimeout = config.Duration(20 * time.Millisecond)
+	cfg := &config.Config{Servers: map[string]config.Server{"slow": slow}}
+	if err := cfg.SetServerTools("slow", nil); err != nil {
+		t.Fatalf("initialize config routes: %v", err)
+	}
+
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	srv := New(cfg, bytes.NewReader(nil), &out, &stderr)
+	start := time.Now()
+	if err := srv.handle(context.Background(), mcp.Message{JSONRPC: "2.0", ID: "1", Method: "tools/list"}); err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("tools/list discovery took %s, want under 1s", elapsed)
+	}
+	if !bytes.Contains(stderr.Bytes(), []byte("failed to discover tools for slow")) {
+		t.Fatalf("stderr did not report discovery failure: %s", stderr.String())
+	}
+	srv.backends.Shutdown()
+}
+
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_SERVER_HELPER_PROCESS") != "1" {
 		return
@@ -81,6 +133,16 @@ func TestHelperProcess(t *testing.T) {
 			}))
 		case "notifications/initialized":
 		case "tools/list":
+			if path := os.Getenv("LAZYMCP_LIST_COUNT_PATH"); path != "" {
+				incrementCount(path)
+			}
+			if os.Getenv("LAZYMCP_SLEEP_ON_LIST") == "1" {
+				time.Sleep(time.Minute)
+			}
+			if os.Getenv("LAZYMCP_EMPTY_TOOLS") == "1" {
+				_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{"tools": []map[string]any{}}))
+				continue
+			}
 			_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{"tools": []map[string]any{
 				{
 					"name":        "ping",
@@ -95,15 +157,19 @@ func TestHelperProcess(t *testing.T) {
 }
 
 func helperServer(startCountPath string) config.Server {
+	return helperServerWithEnv(startCountPath)
+}
+
+func helperServerWithEnv(startCountPath string, extraEnv ...string) config.Server {
+	args := []string{
+		"GO_WANT_SERVER_HELPER_PROCESS=1",
+		"LAZYMCP_START_COUNT_PATH=" + startCountPath,
+	}
+	args = append(args, extraEnv...)
+	args = append(args, os.Args[0], "-test.run=TestHelperProcess", "--")
 	return config.Server{
-		Command: "env",
-		Args: []string{
-			"GO_WANT_SERVER_HELPER_PROCESS=1",
-			"LAZYMCP_START_COUNT_PATH=" + startCountPath,
-			os.Args[0],
-			"-test.run=TestHelperProcess",
-			"--",
-		},
+		Command:        "env",
+		Args:           args,
 		IdleTimeout:    config.Duration(time.Minute),
 		RequestTimeout: config.Duration(time.Second),
 	}
@@ -125,6 +191,10 @@ func resultTools(t *testing.T, result any) []config.Tool {
 }
 
 func incrementStartCount(path string) {
+	incrementCount(path)
+}
+
+func incrementCount(path string) {
 	count := 0
 	if data, err := os.ReadFile(path); err == nil {
 		count, _ = strconv.Atoi(string(data))
@@ -133,6 +203,10 @@ func incrementStartCount(path string) {
 }
 
 func readStartCount(t *testing.T, path string) int {
+	return readCount(t, path)
+}
+
+func readCount(t *testing.T, path string) int {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
