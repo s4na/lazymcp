@@ -59,14 +59,21 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	if len(cfg.Servers) == 0 {
-		return nil, fmt.Errorf("config must define at least one server")
-	}
-
-	if err := cfg.rebuildRoutes(); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+func (c *Config) Validate() error {
+	if len(c.Servers) == 0 {
+		return fmt.Errorf("config must define at least one server")
+	}
+
+	if err := c.rebuildRoutes(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *Config) rebuildRoutes() error {

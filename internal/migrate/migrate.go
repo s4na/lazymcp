@@ -70,6 +70,9 @@ func Run(opts Options) (*Plan, error) {
 		Servers:     servers,
 		Skipped:     skipped,
 	}
+	if err := validateExistingLazyConfigFile(opts.ConfigPath); err != nil {
+		return plan, err
+	}
 	conflicts, err := mergeConflicts(opts.ConfigPath, servers, opts.Overwrite)
 	if err != nil {
 		return nil, err
@@ -85,6 +88,9 @@ func Run(opts Options) (*Plan, error) {
 		}
 		plan.ChangedFiles = changed
 		plan.Backups = backups
+		if err := validateWrittenLazyConfigFile(opts.ConfigPath); err != nil {
+			return plan, err
+		}
 	}
 	if opts.UpdateClient {
 		if !opts.Write {
@@ -99,6 +105,9 @@ func Run(opts Options) (*Plan, error) {
 		}
 		plan.ChangedFiles = append(plan.ChangedFiles, changed...)
 		plan.Backups = append(plan.Backups, backups...)
+		if _, err := readCodexConfig(sourceFiles[0]); err != nil {
+			return plan, err
+		}
 	}
 	return plan, nil
 }
@@ -278,6 +287,9 @@ func writeConfig(path string, incoming map[string]config.Server, overwrite bool)
 		cfg = &config.Config{Servers: map[string]config.Server{}}
 	}
 	changed := removeLazyConfigServers(cfg, path)
+	if len(incoming) == 0 && len(cfg.Servers) == 0 {
+		return nil, nil, nil
+	}
 	for name, srv := range incoming {
 		existing, exists := cfg.Servers[name]
 		if exists && !overwrite && sameImportedServer(name, existing, srv) {
@@ -458,6 +470,31 @@ func readLazyConfig(path string) (*config.Config, error) {
 		cfg.Servers = map[string]config.Server{}
 	}
 	return &cfg, nil
+}
+
+func validateLazyConfigFile(path string, allowEmpty bool) error {
+	cfg, err := readLazyConfig(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if len(cfg.Servers) == 0 && allowEmpty {
+		return nil
+	}
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("validate %s: %w", path, err)
+	}
+	return nil
+}
+
+func validateExistingLazyConfigFile(path string) error {
+	return validateLazyConfigFile(path, true)
+}
+
+func validateWrittenLazyConfigFile(path string) error {
+	return validateLazyConfigFile(path, false)
 }
 
 func readCodexConfig(path string) (*clientConfig, error) {
