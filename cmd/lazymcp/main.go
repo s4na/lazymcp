@@ -53,7 +53,7 @@ func newRootCommand() *cobra.Command {
 
 	root.AddCommand(&cobra.Command{
 		Use:   "init",
-		Short: "Create an empty lazymcp config file",
+		Short: "Create an empty lazymcp config file for migration or manual editing",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := initConfig(configPath); err != nil {
@@ -68,10 +68,6 @@ func newRootCommand() *cobra.Command {
 		Use:   "serve",
 		Short: "Run the MCP stdio proxy",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load(configPath)
-			if err != nil {
-				return err
-			}
 			logFile, err := openLogFile()
 			if err != nil {
 				return err
@@ -79,6 +75,11 @@ func newRootCommand() *cobra.Command {
 			defer logFile.Close()
 			stderr := io.MultiWriter(os.Stderr, logFile)
 			fmt.Fprintf(logFile, "%s lazymcp serve starting with config %s\n", time.Now().Format(time.RFC3339), configPath)
+			cfg, err := config.Load(configPath)
+			if err != nil {
+				fmt.Fprintf(logFile, "%s lazymcp serve failed to load config: %s\n", time.Now().Format(time.RFC3339), err)
+				return err
+			}
 			srv := server.New(cfg, os.Stdin, os.Stdout, stderr)
 			return srv.Run(cmd.Context())
 		},
@@ -211,7 +212,15 @@ func openLogFile() (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	return file, nil
 }
 
 func defaultLogPath() (string, error) {

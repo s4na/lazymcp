@@ -89,6 +89,61 @@ func TestOpenLogFileCreatesHomeTmpLazyMCPLog(t *testing.T) {
 	}
 }
 
+func TestOpenLogFileRestrictsExistingLogPermissions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, "tmp", "lazymcp", "lazymcp.log")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("mkdir log dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	file, err := openLogFile()
+	if err != nil {
+		t.Fatalf("open log file: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close log: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat log: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("permissions = %o, want 600", got)
+	}
+}
+
+func TestServeLogsConfigLoadFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+	target := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(target, []byte("servers: {}\n"), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cmd := newRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--config", target, "serve"})
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "config must define at least one server") {
+		t.Fatalf("error = %v", err)
+	}
+	logPath := filepath.Join(home, "tmp", "lazymcp", "lazymcp.log")
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if !strings.Contains(string(data), "lazymcp serve failed to load config") {
+		t.Fatalf("log missing load failure:\n%s", string(data))
+	}
+}
+
 func TestMigrateCommandHidesSourceSelection(t *testing.T) {
 	cmd := newRootCommand()
 	var out bytes.Buffer
