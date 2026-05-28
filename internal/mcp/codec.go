@@ -17,6 +17,8 @@ type Codec struct {
 	mu sync.Mutex
 }
 
+const MaxContentLength = 16 * 1024 * 1024
+
 func NewCodec(r io.Reader, w io.Writer) *Codec {
 	return &Codec{r: bufio.NewReader(r), w: w}
 }
@@ -42,6 +44,9 @@ func (c *Codec) Read() (Message, error) {
 	length, err := strconv.Atoi(headers["content-length"])
 	if err != nil || length < 0 {
 		return Message{}, fmt.Errorf("invalid content-length")
+	}
+	if length > MaxContentLength {
+		return Message{}, fmt.Errorf("content-length %d exceeds maximum %d", length, MaxContentLength)
 	}
 
 	body := make([]byte, length)

@@ -62,7 +62,8 @@ func newRootCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			for name, srv := range cfg.Servers {
+			for _, name := range cfg.ServerNames() {
+				srv := cfg.Servers[name]
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", name, srv.NamespaceOrName(name), srv.CommandLine())
 			}
 			return nil

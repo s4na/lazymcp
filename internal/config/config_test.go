@@ -79,13 +79,28 @@ servers:
 
 func TestServerForToolStripsNamespace(t *testing.T) {
 	cfg := &Config{Servers: map[string]Server{
-		"github": {Command: "npx", Namespace: "github"},
+		"github": {Command: "npx", Namespace: "github", Tools: []Tool{{Name: "search_repositories"}}},
 	}}
+	cfg.routes = map[string]Route{
+		"github.search_repositories": {ServerName: "github", Server: cfg.Servers["github"], BackendTool: "search_repositories"},
+	}
 	name, _, toolName, ok := cfg.ServerForTool("github.search_repositories")
 	if !ok {
 		t.Fatalf("expected route")
 	}
 	if name != "github" || toolName != "search_repositories" {
 		t.Fatalf("route = %q %q", name, toolName)
+	}
+}
+
+func TestServerForToolRejectsUnlistedTool(t *testing.T) {
+	cfg := &Config{Servers: map[string]Server{
+		"github": {Command: "npx", Namespace: "github", Tools: []Tool{{Name: "search"}}},
+	}}
+	cfg.routes = map[string]Route{
+		"github.search": {ServerName: "github", Server: cfg.Servers["github"], BackendTool: "search"},
+	}
+	if _, _, _, ok := cfg.ServerForTool("github.delete_repo"); ok {
+		t.Fatalf("expected unlisted tool to be rejected")
 	}
 }

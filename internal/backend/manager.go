@@ -29,6 +29,15 @@ func (m *Manager) Call(ctx context.Context, serverName string, srv config.Server
 	if err != nil {
 		return nil, &mcp.Error{Code: -32000, Message: err.Error()}
 	}
+	result, callErr := proc.Call(ctx, toolName, args)
+	if callErr == nil || callErr.Code != -32000 {
+		return result, callErr
+	}
+	m.remove(serverName, proc)
+	proc, err = m.get(ctx, serverName, srv, initParams)
+	if err != nil {
+		return nil, &mcp.Error{Code: -32000, Message: err.Error()}
+	}
 	return proc.Call(ctx, toolName, args)
 }
 
@@ -70,15 +79,27 @@ func (m *Manager) reap(name string, proc *Process) {
 	}
 }
 
+func (m *Manager) remove(name string, proc *Process) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.procs[name] == proc {
+		delete(m.procs, name)
+	}
+	proc.Stop()
+}
+
 type Process struct {
 	cmd         *exec.Cmd
 	codec       *mcp.Codec
 	mu          sync.Mutex
+	stateMu     sync.Mutex
 	done        chan struct{}
 	idleTimeout time.Duration
 	reqTimeout  time.Duration
 	idleTimer   *time.Timer
 	nextID      uint64
+	inFlight    bool
+	stopped     bool
 }
 
 func Start(ctx context.Context, srv config.Server, stderr io.Writer) (*Process, error) {
@@ -138,8 +159,8 @@ func (p *Process) Call(ctx context.Context, toolName string, args json.RawMessag
 func (p *Process) request(ctx context.Context, method string, params json.RawMessage) (mcp.Message, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.stopIdleTimer()
-	defer p.resetIdleTimer()
+	p.beginRequest()
+	defer p.endRequest()
 	if p.reqTimeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, p.reqTimeout)
@@ -193,6 +214,12 @@ func idsEqual(got any, want string) bool {
 }
 
 func (p *Process) Running() bool {
+	p.stateMu.Lock()
+	stopped := p.stopped
+	p.stateMu.Unlock()
+	if stopped {
+		return false
+	}
 	select {
 	case <-p.done:
 		return false
@@ -207,27 +234,68 @@ func (p *Process) Wait() {
 }
 
 func (p *Process) Stop() {
-	if p.idleTimer != nil {
-		p.idleTimer.Stop()
+	p.stateMu.Lock()
+	if p.stopped {
+		p.stateMu.Unlock()
+		return
 	}
+	p.stopped = true
+	p.stopIdleTimerLocked()
+	p.stateMu.Unlock()
 	if p.cmd.Process != nil {
 		_ = p.cmd.Process.Kill()
 	}
 }
 
+func (p *Process) beginRequest() {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+	p.inFlight = true
+	p.stopIdleTimerLocked()
+}
+
+func (p *Process) endRequest() {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+	p.inFlight = false
+	p.resetIdleTimerLocked()
+}
+
 func (p *Process) resetIdleTimer() {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+	p.resetIdleTimerLocked()
+}
+
+func (p *Process) resetIdleTimerLocked() {
+	if p.stopped || p.inFlight {
+		return
+	}
 	if p.idleTimeout <= 0 {
 		return
 	}
 	if p.idleTimer == nil {
-		p.idleTimer = time.AfterFunc(p.idleTimeout, p.Stop)
+		p.idleTimer = time.AfterFunc(p.idleTimeout, p.stopIfIdle)
 		return
 	}
 	p.idleTimer.Reset(p.idleTimeout)
 }
 
-func (p *Process) stopIdleTimer() {
+func (p *Process) stopIdleTimerLocked() {
 	if p.idleTimer != nil {
 		p.idleTimer.Stop()
+	}
+}
+
+func (p *Process) stopIfIdle() {
+	p.stateMu.Lock()
+	if p.inFlight || p.stopped {
+		p.stateMu.Unlock()
+		return
+	}
+	p.stopped = true
+	p.stateMu.Unlock()
+	if p.cmd.Process != nil {
+		_ = p.cmd.Process.Kill()
 	}
 }
