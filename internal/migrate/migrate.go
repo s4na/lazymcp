@@ -22,11 +22,12 @@ const (
 )
 
 type Options struct {
-	Source     Source
-	ConfigPath string
-	SourcePath string
-	Write      bool
-	Overwrite  bool
+	Source       Source
+	ConfigPath   string
+	SourcePath   string
+	Write        bool
+	Overwrite    bool
+	UpdateClient bool
 }
 
 type Plan struct {
@@ -85,6 +86,20 @@ func Run(opts Options) (*Plan, error) {
 		plan.ChangedFiles = changed
 		plan.Backups = backups
 	}
+	if opts.UpdateClient {
+		if !opts.Write {
+			return plan, fmt.Errorf("updating the source client requires --write")
+		}
+		if len(sourceFiles) == 0 {
+			return plan, fmt.Errorf("no source client config path discovered")
+		}
+		changed, backups, err := writeClientProxy(opts.Source, sourceFiles[0], opts.ConfigPath)
+		if err != nil {
+			return plan, err
+		}
+		plan.ChangedFiles = append(plan.ChangedFiles, changed...)
+		plan.Backups = append(plan.Backups, backups...)
+	}
 	return plan, nil
 }
 
@@ -95,6 +110,57 @@ func discover(opts Options) (map[string]config.Server, []string, []string, error
 	default:
 		return nil, nil, nil, fmt.Errorf("unsupported source %q", opts.Source)
 	}
+}
+
+func writeClientProxy(source Source, sourcePath, configPath string) ([]string, []string, error) {
+	switch source {
+	case SourceCodex:
+		return writeCodexProxy(sourcePath, configPath)
+	default:
+		return nil, nil, fmt.Errorf("unsupported source %q", source)
+	}
+}
+
+func writeCodexProxy(sourcePath, configPath string) ([]string, []string, error) {
+	data, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return nil, nil, err
+	}
+	var raw map[string]any
+	if err := toml.Unmarshal(data, &raw); err != nil {
+		return nil, nil, fmt.Errorf("parse %s: %w", sourcePath, err)
+	}
+	raw["mcp_servers"] = map[string]any{
+		"lazymcp": map[string]any{
+			"command": "lazymcp",
+			"args":    []string{"serve", "--config", absoluteOrOriginal(configPath)},
+		},
+	}
+	encoded, err := toml.Marshal(raw)
+	if err != nil {
+		return nil, nil, err
+	}
+	var backups []string
+	backup, err := backupFile(sourcePath)
+	if err != nil {
+		return nil, nil, err
+	}
+	backups = append(backups, backup)
+	if err := writeConfigFile(sourcePath, encoded); err != nil {
+		return nil, nil, err
+	}
+	return []string{sourcePath}, backups, nil
+}
+
+func absoluteOrOriginal(path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	return abs
 }
 
 func discoverCodex(opts Options) (map[string]config.Server, []string, []string, error) {
