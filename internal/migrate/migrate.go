@@ -130,6 +130,9 @@ func writeCodexProxy(sourcePath, configPath string) ([]string, []string, error) 
 	if err := toml.Unmarshal(data, &raw); err != nil {
 		return nil, nil, fmt.Errorf("parse %s: %w", sourcePath, err)
 	}
+	if codexAlreadyUsesLazyProxy(raw, configPath) {
+		return nil, nil, nil
+	}
 	raw["mcp_servers"] = map[string]any{
 		"lazymcp": map[string]any{
 			"command": "lazymcp",
@@ -150,6 +153,31 @@ func writeCodexProxy(sourcePath, configPath string) ([]string, []string, error) 
 		return nil, nil, err
 	}
 	return []string{sourcePath}, backups, nil
+}
+
+func codexAlreadyUsesLazyProxy(raw map[string]any, configPath string) bool {
+	serversValue, ok := raw["mcp_servers"]
+	if !ok {
+		return false
+	}
+	servers, ok := serversValue.(map[string]any)
+	if !ok || len(servers) != 1 {
+		return false
+	}
+	value, ok := servers["lazymcp"]
+	if !ok {
+		return false
+	}
+	table, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	srv, err := parseCodexServer("", "lazymcp", table)
+	if err != nil {
+		return false
+	}
+	wantConfigPath := absoluteOrOriginal(configPath)
+	return isLazyMCPProxy(srv) && len(srv.Args) == 3 && srv.Args[0] == "serve" && srv.Args[1] == "--config" && srv.Args[2] == wantConfigPath
 }
 
 func absoluteOrOriginal(path string) string {
@@ -178,6 +206,9 @@ func discoverCodex(opts Options) (map[string]config.Server, []string, []string, 
 	}
 	servers, skipped := convert(raw.MCPServers)
 	if len(servers) == 0 {
+		if len(skipped) > 0 {
+			return servers, []string{path}, skipped, nil
+		}
 		return nil, nil, skipped, errors.New("no Codex MCP servers to import")
 	}
 	return servers, []string{path}, skipped, nil
@@ -216,10 +247,13 @@ func mergeConflicts(path string, incoming map[string]config.Server, overwrite bo
 	var conflicts []string
 	namespaces := map[string]string{}
 	for name, srv := range existing.Servers {
+		if isLazyConfigServer(srv) {
+			continue
+		}
 		namespaces[srv.NamespaceOrName(name)] = name
 	}
 	for name, srv := range incoming {
-		if _, ok := existing.Servers[name]; ok && !overwrite {
+		if existingSrv, ok := existing.Servers[name]; ok && !overwrite && !sameImportedServer(name, existingSrv, srv) {
 			conflicts = append(conflicts, fmt.Sprintf("server name %q already exists", name))
 		}
 		namespace := srv.NamespaceOrName(name)
@@ -239,11 +273,20 @@ func writeConfig(path string, incoming map[string]config.Server, overwrite bool)
 		}
 		cfg = &config.Config{Servers: map[string]config.Server{}}
 	}
+	changed := removeLazyConfigServers(cfg)
 	for name, srv := range incoming {
-		if _, exists := cfg.Servers[name]; exists && !overwrite {
+		existing, exists := cfg.Servers[name]
+		if exists && !overwrite && sameImportedServer(name, existing, srv) {
+			continue
+		}
+		if exists && !overwrite {
 			return nil, nil, fmt.Errorf("server %q already exists", name)
 		}
 		cfg.Servers[name] = srv
+		changed = true
+	}
+	if !changed {
+		return nil, nil, nil
 	}
 	applyDefaults(cfg)
 	data, err := yaml.Marshal(cfg)
@@ -279,6 +322,75 @@ func applyDefaults(cfg *config.Config) {
 		}
 		cfg.Servers[name] = srv
 	}
+}
+
+func removeLazyConfigServers(cfg *config.Config) bool {
+	changed := false
+	for name, srv := range cfg.Servers {
+		if isLazyConfigServer(srv) {
+			delete(cfg.Servers, name)
+			changed = true
+		}
+	}
+	return changed
+}
+
+func sameImportedServer(name string, existing, incoming config.Server) bool {
+	existing = normalizedServer(existing)
+	incoming = normalizedServer(incoming)
+	return existing.Command == incoming.Command &&
+		stringSlicesEqual(existing.Args, incoming.Args) &&
+		stringMapsEqual(existing.Env, incoming.Env) &&
+		existing.NamespaceOrName(name) == incoming.NamespaceOrName(name) &&
+		existing.IdleTimeout == incoming.IdleTimeout &&
+		existing.RequestTimeout == incoming.RequestTimeout &&
+		(len(incoming.Tools) == 0 || toolsEqual(existing.Tools, incoming.Tools))
+}
+
+func normalizedServer(srv config.Server) config.Server {
+	if srv.IdleTimeout == 0 {
+		srv.IdleTimeout = config.Duration(5 * time.Minute)
+	}
+	if srv.RequestTimeout == 0 {
+		srv.RequestTimeout = config.Duration(10 * time.Minute)
+	}
+	return srv
+}
+
+func stringSlicesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func stringMapsEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key, aValue := range a {
+		if b[key] != aValue {
+			return false
+		}
+	}
+	return true
+}
+
+func toolsEqual(a, b []config.Tool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Name != b[i].Name || a[i].Description != b[i].Description {
+			return false
+		}
+	}
+	return true
 }
 
 func FormatPlan(plan *Plan) string {
@@ -598,4 +710,8 @@ func isLazyMCPProxy(srv clientServer) bool {
 		}
 	}
 	return false
+}
+
+func isLazyConfigServer(srv config.Server) bool {
+	return isLazyMCPProxy(clientServer{Command: srv.Command, Args: srv.Args})
 }
