@@ -129,7 +129,7 @@ func newMigrateCommand(configPath *string) *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&opts.Write, "write", false, "write merged lazymcp config")
 	cmd.PersistentFlags().BoolVar(&opts.Overwrite, "overwrite", false, "overwrite existing lazymcp server entries")
 	cmd.PersistentFlags().StringVar(&opts.SourcePath, "source-path", "", "source client config path")
-	cmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "preview the migration without writing files")
+	cmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "preview the migration without writing files (default unless --write is set)")
 
 	cmd.AddCommand(&cobra.Command{
 		Use:   "codex",

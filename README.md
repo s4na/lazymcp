@@ -151,6 +151,8 @@ Preview MCP servers already configured in Codex:
 lazymcp migrate codex --dry-run
 ```
 
+Preview is the default unless `--write` is set; `--dry-run` is accepted to make the intent explicit.
+
 Write imported servers into the lazymcp config:
 
 ```bash

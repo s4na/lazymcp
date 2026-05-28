@@ -28,6 +28,24 @@ func TestEnvListSortsAndFormatsValues(t *testing.T) {
 	}
 }
 
+func TestManagerPassesConfiguredEnvToBackend(t *testing.T) {
+	startCountPath := t.TempDir() + "/starts"
+	srv := helperServer(startCountPath)
+	srv.Env = map[string]string{"LAZYMCP_CONFIG_ENV": "from-config"}
+
+	manager := NewManager(os.Stderr)
+	result, callErr := manager.Call(context.Background(), "test", srv, "ping", json.RawMessage(`{}`), nil)
+	if callErr != nil {
+		t.Fatalf("call: %v", callErr)
+	}
+
+	text := helperResultText(t, result)
+	if text != "from-config" {
+		t.Fatalf("backend env = %q, want %q", text, "from-config")
+	}
+	manager.Shutdown()
+}
+
 func TestIDsEqualSupportsStringIDs(t *testing.T) {
 	if !idsEqual("42", "42") {
 		t.Fatalf("expected string ID to match")
@@ -127,8 +145,12 @@ func TestHelperProcess(t *testing.T) {
 				os.Exit(0)
 			}
 		case "tools/call":
+			text := os.Getenv("LAZYMCP_CONFIG_ENV")
+			if text == "" {
+				text = "ok"
+			}
 			_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{"content": []map[string]any{
-				{"type": "text", "text": "ok"},
+				{"type": "text", "text": text},
 			}}))
 		default:
 			_ = codec.Write(mcp.NewError(msg.ID, -32601, "method not found"))
@@ -187,4 +209,25 @@ func readStartCount(t *testing.T, path string) int {
 		t.Fatalf("parse start count: %v", err)
 	}
 	return count
+}
+
+func helperResultText(t *testing.T, result any) string {
+	t.Helper()
+	resultMap, ok := result.(map[string]any)
+	if !ok {
+		t.Fatalf("result = %#v, want map", result)
+	}
+	content, ok := resultMap["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("content = %#v, want non-empty slice", resultMap["content"])
+	}
+	first, ok := content[0].(map[string]any)
+	if !ok {
+		t.Fatalf("content[0] = %#v, want map", content[0])
+	}
+	text, ok := first["text"].(string)
+	if !ok {
+		t.Fatalf("content[0].text = %#v, want string", first["text"])
+	}
+	return text
 }

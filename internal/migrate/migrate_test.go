@@ -230,6 +230,47 @@ servers:
 	}
 }
 
+func TestRunWriteRestrictsExistingConfigPermissions(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+
+[mcp_servers.github.env]
+GITHUB_TOKEN = "secret-token"
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	err = os.WriteFile(target, []byte(`
+servers:
+  filesystem:
+    command: npx
+`), 0o644)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	_, err = Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: target,
+		SourcePath: source,
+		Write:      true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat target: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("target permissions = %o, want 600", got)
+	}
+}
+
 func TestRunWriteCreatesDistinctBackups(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")

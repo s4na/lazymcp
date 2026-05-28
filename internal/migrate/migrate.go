@@ -193,7 +193,7 @@ func writeConfig(path string, incoming map[string]config.Server, overwrite bool)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, nil, err
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := writeConfigFile(path, data); err != nil {
 		return nil, nil, err
 	}
 	return []string{path}, backups, nil
@@ -395,6 +395,41 @@ func writeNewFile(path string, data []byte) error {
 		err = io.ErrShortWrite
 	}
 	return err
+}
+
+func writeConfigFile(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	n, err := tmp.Write(data)
+	if err == nil && n != len(data) {
+		err = io.ErrShortWrite
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	cleanup = false
+	return os.Chmod(path, 0o600)
 }
 
 func copyEnv(in map[string]string) map[string]string {
