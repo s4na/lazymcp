@@ -5,7 +5,8 @@
 ## Install
 
 ```bash
-brew install s4na/lazymcp/lazymcp
+brew tap s4na/lazymcp https://github.com/s4na/lazymcp
+brew install lazymcp
 ```
 
 Or install with Go:
