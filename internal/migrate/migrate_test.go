@@ -48,6 +48,114 @@ DEBUG = "1"
 	}
 }
 
+func TestRunCodexRejectsMissingMCPServersTable(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	err := os.WriteFile(source, []byte(`
+[projects."/tmp/repo"]
+trust_level = "trusted"
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	_, err = Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: filepath.Join(dir, "lazymcp.yaml"),
+		SourcePath: source,
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing [mcp_servers] table") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRunCodexRejectsInvalidServerShape(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "missing command",
+			body: `
+[mcp_servers.github]
+args = ["-y", "github"]
+`,
+			want: "command is required",
+		},
+		{
+			name: "non string command",
+			body: `
+[mcp_servers.github]
+command = ["npx"]
+`,
+			want: "command must be a non-empty string",
+		},
+		{
+			name: "args is not string array",
+			body: `
+[mcp_servers.github]
+command = "npx"
+args = ["-y", 1]
+`,
+			want: "args must be an array of strings",
+		},
+		{
+			name: "env value is not string",
+			body: `
+[mcp_servers.github]
+command = "npx"
+
+[mcp_servers.github.env]
+GITHUB_TOKEN = 1
+`,
+			want: "env must be a table of string values",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			source := filepath.Join(dir, "config.toml")
+			err := os.WriteFile(source, []byte(tt.body), 0o600)
+			if err != nil {
+				t.Fatalf("write source: %v", err)
+			}
+
+			_, err = Run(Options{
+				Source:     SourceCodex,
+				ConfigPath: filepath.Join(dir, "lazymcp.yaml"),
+				SourcePath: source,
+			})
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunCodexSkipsExistingLazyMCPProxy(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.lazymcp]
+command = "lazymcp"
+args = ["serve", "--config", "/tmp/lazymcp.yaml"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	_, err = Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: filepath.Join(dir, "lazymcp.yaml"),
+		SourcePath: source,
+	})
+	if err == nil || !strings.Contains(err.Error(), "no Codex MCP servers to import") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestRunWriteCreatesBackupAndMergesConfig(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")
@@ -124,78 +232,4 @@ servers:
 	if plan == nil || len(plan.Conflicts) != 1 {
 		t.Fatalf("conflicts = %#v", plan)
 	}
-}
-
-func TestRunClaudeFindsProjectConfig(t *testing.T) {
-	dir := t.TempDir()
-	project := filepath.Join(dir, "project")
-	if err := os.MkdirAll(project, 0o700); err != nil {
-		t.Fatalf("mkdir project: %v", err)
-	}
-	source := filepath.Join(project, ".mcp.json")
-	err := os.WriteFile(source, []byte(`{
-  "mcpServers": {
-    "github": {
-      "command": "npx",
-      "args": ["-y", "github"]
-    }
-  }
-}`), 0o600)
-	if err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-
-	plan, err := Run(Options{
-		Source:      SourceClaude,
-		ConfigPath:  filepath.Join(dir, "lazymcp.yaml"),
-		SourcePath:  source,
-		ProjectPath: project,
-	})
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if _, ok := plan.Servers["github"]; !ok {
-		t.Fatalf("github server was not imported")
-	}
-}
-
-func TestRunClaudeFindsProjectEntryInClaudeJSON(t *testing.T) {
-	dir := t.TempDir()
-	project := filepath.Join(dir, "project")
-	if err := os.MkdirAll(project, 0o700); err != nil {
-		t.Fatalf("mkdir project: %v", err)
-	}
-	source := filepath.Join(dir, ".claude.json")
-	err := os.WriteFile(source, []byte(`{
-  "projects": {
-    "`+jsonPath(project)+`": {
-      "mcpServers": {
-        "github": {
-          "command": "npx",
-          "args": ["-y", "github"]
-        }
-      }
-    }
-  }
-}`), 0o600)
-	if err != nil {
-		t.Fatalf("write source: %v", err)
-	}
-
-	plan, err := Run(Options{
-		Source:      SourceClaude,
-		ConfigPath:  filepath.Join(dir, "lazymcp.yaml"),
-		SourcePath:  source,
-		ProjectPath: project,
-	})
-	if err != nil {
-		t.Fatalf("run: %v", err)
-	}
-	if _, ok := plan.Servers["github"]; !ok {
-		t.Fatalf("github server was not imported")
-	}
-}
-
-func jsonPath(path string) string {
-	return strings.ReplaceAll(path, `\`, `\\`)
 }

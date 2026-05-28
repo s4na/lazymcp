@@ -1,8 +1,6 @@
 package migrate
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -19,18 +17,15 @@ import (
 type Source string
 
 const (
-	SourceCodex  Source = "codex"
-	SourceClaude Source = "claude"
+	SourceCodex Source = "codex"
 )
 
 type Options struct {
-	Source        Source
-	ConfigPath    string
-	SourcePath    string
-	ProjectPath   string
-	Write         bool
-	Overwrite     bool
-	DisableSource bool
+	Source     Source
+	ConfigPath string
+	SourcePath string
+	Write      bool
+	Overwrite  bool
 }
 
 type Plan struct {
@@ -45,24 +40,16 @@ type Plan struct {
 }
 
 type clientConfig struct {
-	MCPServers map[string]clientServer `json:"mcpServers" toml:"mcp_servers"`
-}
-
-type claudeConfig struct {
-	MCPServers map[string]clientServer `json:"mcpServers"`
-	Projects   map[string]clientConfig `json:"projects"`
+	MCPServers map[string]clientServer
 }
 
 type clientServer struct {
-	Command string            `json:"command" toml:"command"`
-	Args    []string          `json:"args,omitempty" toml:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty" toml:"env,omitempty"`
+	Command string
+	Args    []string
+	Env     map[string]string
 }
 
 func Run(opts Options) (*Plan, error) {
-	if opts.DisableSource {
-		return nil, errors.New("--disable-source is not supported yet; migrate with --write, then update the source client manually")
-	}
 	if opts.ConfigPath == "" {
 		opts.ConfigPath = config.DefaultPath()
 	}
@@ -100,8 +87,6 @@ func discover(opts Options) (map[string]config.Server, []string, []string, error
 	switch opts.Source {
 	case SourceCodex:
 		return discoverCodex(opts)
-	case SourceClaude:
-		return discoverClaude(opts)
 	default:
 		return nil, nil, nil, fmt.Errorf("unsupported source %q", opts.Source)
 	}
@@ -116,60 +101,15 @@ func discoverCodex(opts Options) (map[string]config.Server, []string, []string, 
 		}
 		path = filepath.Join(home, ".codex", "config.toml")
 	}
-	var raw clientConfig
-	if err := readTOML(path, &raw); err != nil {
+	raw, err := readCodexConfig(path)
+	if err != nil {
 		return nil, nil, nil, err
 	}
 	servers, skipped := convert(raw.MCPServers)
+	if len(servers) == 0 {
+		return nil, nil, skipped, errors.New("no Codex MCP servers to import")
+	}
 	return servers, []string{path}, skipped, nil
-}
-
-func discoverClaude(opts Options) (map[string]config.Server, []string, []string, error) {
-	paths := []string{}
-	if opts.SourcePath != "" {
-		paths = append(paths, opts.SourcePath)
-	} else {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		paths = append(paths,
-			filepath.Join(home, ".claude.json"),
-			filepath.Join(home, ".claude", "settings.json"),
-		)
-		if opts.ProjectPath != "" {
-			paths = append(paths,
-				filepath.Join(opts.ProjectPath, ".mcp.json"),
-				filepath.Join(opts.ProjectPath, ".claude", "settings.json"),
-			)
-		}
-	}
-	out := map[string]config.Server{}
-	var sourceFiles []string
-	var skipped []string
-	for _, path := range unique(paths) {
-		raw, err := readClaudeConfig(path, opts.ProjectPath)
-		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				skipped = append(skipped, fmt.Sprintf("%s: not found", path))
-				continue
-			}
-			return nil, nil, nil, err
-		}
-		sourceFiles = append(sourceFiles, path)
-		converted, convertedSkipped := convert(raw)
-		skipped = append(skipped, convertedSkipped...)
-		for name, srv := range converted {
-			if _, exists := out[name]; exists {
-				return nil, nil, nil, fmt.Errorf("server %q is defined by multiple Claude config files", name)
-			}
-			out[name] = srv
-		}
-	}
-	if len(sourceFiles) == 0 {
-		return nil, nil, skipped, errors.New("no Claude config files found")
-	}
-	return out, sourceFiles, skipped, nil
 }
 
 func convert(servers map[string]clientServer) (map[string]config.Server, []string) {
@@ -337,60 +277,100 @@ func readLazyConfig(path string) (*config.Config, error) {
 	return &cfg, nil
 }
 
-func readTOML(path string, out any) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	if err := toml.Unmarshal(data, out); err != nil {
-		return fmt.Errorf("parse %s: %w", path, err)
-	}
-	return nil
-}
-
-func readJSON(path string, out any) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	if err := decoder.Decode(out); err != nil {
-		return fmt.Errorf("parse %s: %w", path, err)
-	}
-	return nil
-}
-
-func readClaudeConfig(path, projectPath string) (map[string]clientServer, error) {
-	if filepath.Ext(path) == ".toml" {
-		var raw clientConfig
-		if err := readTOML(path, &raw); err != nil {
-			return nil, err
-		}
-		return raw.MCPServers, nil
-	}
+func readCodexConfig(path string) (*clientConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var raw claudeConfig
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	if err := decoder.Decode(&raw); err != nil {
+	var raw map[string]any
+	if err := toml.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	out := map[string]clientServer{}
-	for name, srv := range raw.MCPServers {
-		out[name] = srv
+	serversValue, ok := raw["mcp_servers"]
+	if !ok {
+		return nil, fmt.Errorf("validate %s: missing [mcp_servers] table", path)
 	}
-	if projectPath != "" && len(raw.Projects) > 0 {
-		project, err := filepath.Abs(projectPath)
+	serversMap, ok := serversValue.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("validate %s: [mcp_servers] must be a table", path)
+	}
+	if len(serversMap) == 0 {
+		return nil, fmt.Errorf("validate %s: [mcp_servers] must define at least one server table", path)
+	}
+	out := &clientConfig{MCPServers: map[string]clientServer{}}
+	for name, value := range serversMap {
+		if name == "" {
+			return nil, fmt.Errorf("validate %s: mcp server name must not be empty", path)
+		}
+		table, ok := value.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("validate %s: [mcp_servers.%s] must be a table", path, name)
+		}
+		srv, err := parseCodexServer(path, name, table)
 		if err != nil {
 			return nil, err
 		}
-		if cfg, ok := raw.Projects[project]; ok {
-			for name, srv := range cfg.MCPServers {
-				out[name] = srv
-			}
+		out.MCPServers[name] = srv
+	}
+	return out, nil
+}
+
+func parseCodexServer(path, name string, table map[string]any) (clientServer, error) {
+	var srv clientServer
+	command, ok := table["command"]
+	if !ok {
+		return srv, fmt.Errorf("validate %s: [mcp_servers.%s].command is required", path, name)
+	}
+	commandString, ok := command.(string)
+	if !ok || commandString == "" {
+		return srv, fmt.Errorf("validate %s: [mcp_servers.%s].command must be a non-empty string", path, name)
+	}
+	srv.Command = commandString
+	if args, ok := table["args"]; ok {
+		parsed, err := stringSlice(args)
+		if err != nil {
+			return srv, fmt.Errorf("validate %s: [mcp_servers.%s].args %w", path, name, err)
 		}
+		srv.Args = parsed
+	}
+	if env, ok := table["env"]; ok {
+		parsed, err := stringMap(env)
+		if err != nil {
+			return srv, fmt.Errorf("validate %s: [mcp_servers.%s].env %w", path, name, err)
+		}
+		srv.Env = parsed
+	}
+	return srv, nil
+}
+
+func stringSlice(value any) ([]string, error) {
+	values, ok := value.([]any)
+	if !ok {
+		return nil, errors.New("must be an array of strings")
+	}
+	out := make([]string, 0, len(values))
+	for _, item := range values {
+		s, ok := item.(string)
+		if !ok {
+			return nil, errors.New("must be an array of strings")
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+func stringMap(value any) (map[string]string, error) {
+	values, ok := value.(map[string]any)
+	if !ok {
+		return nil, errors.New("must be a table of string values")
+	}
+	out := make(map[string]string, len(values))
+	for key, item := range values {
+		s, ok := item.(string)
+		if !ok {
+			return nil, errors.New("must be a table of string values")
+		}
+		out[key] = s
 	}
 	return out, nil
 }
@@ -414,19 +394,6 @@ func copyEnv(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 	for key, value := range in {
 		out[key] = value
-	}
-	return out
-}
-
-func unique(paths []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, path := range paths {
-		if path == "" || seen[path] {
-			continue
-		}
-		seen[path] = true
-		out = append(out, path)
 	}
 	return out
 }
