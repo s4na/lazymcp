@@ -11,6 +11,8 @@ func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error {
 		return err
 	}
 	switch v := raw.(type) {
+	case nil:
+		*d = 0
 	case int:
 		*d = Duration(time.Duration(v) * time.Second)
 	case string:

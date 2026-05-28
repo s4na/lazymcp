@@ -134,6 +134,7 @@ func newMigrateCommand(configPath *string) *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:   "codex",
 		Short: "Migrate Codex MCP settings",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if dryRun && opts.Write {
 				return fmt.Errorf("--dry-run and --write cannot be used together")

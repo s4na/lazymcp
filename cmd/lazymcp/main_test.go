@@ -53,6 +53,19 @@ command = "npx"
 	}
 }
 
+func TestMigrateCodexRejectsUnexpectedArgs(t *testing.T) {
+	cmd := newRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"migrate", "codex", "/tmp/config.toml"})
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestMigrateWithoutSubcommandReturnsError(t *testing.T) {
 	cmd := newRootCommand()
 	var out bytes.Buffer
