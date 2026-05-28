@@ -30,6 +30,23 @@ func newRootCommand() *cobra.Command {
 	root.PersistentFlags().StringVarP(&configPath, "config", "c", config.DefaultPath(), "config file path")
 
 	root.AddCommand(&cobra.Command{
+		Use:    "h [command]",
+		Short:  "Help about any command",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target := root
+			if len(args) > 0 {
+				found, _, err := root.Find(args)
+				if err != nil {
+					return err
+				}
+				target = found
+			}
+			return target.Help()
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
 		Use:   "serve",
 		Short: "Run the MCP stdio proxy",
 		RunE: func(cmd *cobra.Command, args []string) error {
