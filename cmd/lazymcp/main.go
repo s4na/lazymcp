@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"text/tabwriter"
+	"time"
 
+	"github.com/s4na/lazymcp/internal/backend"
 	"github.com/s4na/lazymcp/internal/config"
 	"github.com/s4na/lazymcp/internal/server"
 	"github.com/spf13/cobra"
@@ -25,6 +28,25 @@ func newRootCommand() *cobra.Command {
 		Short: "Lazy MCP proxy/router",
 	}
 	root.PersistentFlags().StringVarP(&configPath, "config", "c", config.DefaultPath(), "config file path")
+
+	root.AddCommand(&cobra.Command{
+		Use:    "h [command]",
+		Short:  "Help about any command",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			target := root
+			if len(args) > 0 {
+				found, _, err := root.Find(args)
+				if err != nil {
+					return err
+				}
+				target = found
+			}
+			target.InitDefaultHelpFlag()
+			target.InitDefaultVersionFlag()
+			return target.Help()
+		},
+	})
 
 	root.AddCommand(&cobra.Command{
 		Use:   "serve",
@@ -56,20 +78,57 @@ func newRootCommand() *cobra.Command {
 
 	root.AddCommand(&cobra.Command{
 		Use:   "inspect",
-		Short: "Show configured backend servers",
+		Short: "Show configured backend servers with initial lifecycle columns",
+		Long: "Show configured backend servers with lifecycle columns for this inspect process.\n" +
+			"Standalone inspect cannot read live in-memory state from an already-running lazymcp serve session.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(configPath)
 			if err != nil {
 				return err
 			}
+			manager := backend.NewManager(os.Stderr)
+			states := manager.States(cfg.ServerNames())
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "NAME\tNAMESPACE\tSTATUS\tLAST_STARTED\tLAST_STOPPED\tSTOP_REASON\tLAST_ERROR\tCOMMAND_LINE")
 			for _, name := range cfg.ServerNames() {
 				srv := cfg.Servers[name]
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", name, srv.NamespaceOrName(name), srv.CommandLine())
+				state := states[name]
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					name,
+					srv.NamespaceOrName(name),
+					state.Status,
+					formatTime(state.LastStarted),
+					formatTime(state.LastStopped),
+					formatStopReason(state.StopReason),
+					formatEmpty(state.LastError),
+					srv.CommandLine(),
+				)
 			}
-			return nil
+			return w.Flush()
 		},
 	})
 
 	root.SetContext(context.Background())
 	return root
+}
+
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return t.Format(time.RFC3339)
+}
+
+func formatStopReason(reason backend.StopReason) string {
+	if reason == "" {
+		return "-"
+	}
+	return string(reason)
+}
+
+func formatEmpty(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }
