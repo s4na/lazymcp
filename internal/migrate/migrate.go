@@ -70,7 +70,7 @@ func Run(opts Options) (*Plan, error) {
 		Servers:     servers,
 		Skipped:     skipped,
 	}
-	if err := validateLazyConfigFile(opts.ConfigPath, true); err != nil {
+	if err := validateExistingLazyConfigFile(opts.ConfigPath); err != nil {
 		return plan, err
 	}
 	conflicts, err := mergeConflicts(opts.ConfigPath, servers, opts.Overwrite)
@@ -88,7 +88,7 @@ func Run(opts Options) (*Plan, error) {
 		}
 		plan.ChangedFiles = changed
 		plan.Backups = backups
-		if err := validateLazyConfigFile(opts.ConfigPath, false); err != nil {
+		if err := validateWrittenLazyConfigFile(opts.ConfigPath); err != nil {
 			return plan, err
 		}
 	}
@@ -287,6 +287,9 @@ func writeConfig(path string, incoming map[string]config.Server, overwrite bool)
 		cfg = &config.Config{Servers: map[string]config.Server{}}
 	}
 	changed := removeLazyConfigServers(cfg, path)
+	if len(incoming) == 0 && len(cfg.Servers) == 0 {
+		return nil, nil, nil
+	}
 	for name, srv := range incoming {
 		existing, exists := cfg.Servers[name]
 		if exists && !overwrite && sameImportedServer(name, existing, srv) {
@@ -484,6 +487,14 @@ func validateLazyConfigFile(path string, allowEmpty bool) error {
 		return fmt.Errorf("validate %s: %w", path, err)
 	}
 	return nil
+}
+
+func validateExistingLazyConfigFile(path string) error {
+	return validateLazyConfigFile(path, true)
+}
+
+func validateWrittenLazyConfigFile(path string) error {
+	return validateLazyConfigFile(path, false)
 }
 
 func readCodexConfig(path string) (*clientConfig, error) {

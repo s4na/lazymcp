@@ -271,6 +271,54 @@ args = ["serve", "--config", "./lazymcp.yaml"]
 	}
 }
 
+func TestRunWriteDoesNotCreateEmptyConfigWhenOnlyLazyProxyExists(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(fmt.Sprintf(`
+[mcp_servers.lazymcp]
+command = "lazymcp"
+args = ["serve", "--config", %q]
+`, target)), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	originalTarget := []byte(fmt.Sprintf(`
+servers:
+  lazymcp:
+    command: lazymcp
+    args:
+      - serve
+      - --config
+      - %s
+`, target))
+	err = os.WriteFile(target, originalTarget, 0o600)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   target,
+		SourcePath:   source,
+		Write:        true,
+		UpdateClient: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(plan.ChangedFiles) != 0 || len(plan.Backups) != 0 {
+		t.Fatalf("plan changed files/backups = %#v/%#v, want no-op", plan.ChangedFiles, plan.Backups)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(got) != string(originalTarget) {
+		t.Fatalf("target changed:\n%s", string(got))
+	}
+}
+
 func TestRunWriteCreatesBackupAndMergesConfig(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")
