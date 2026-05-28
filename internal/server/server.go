@@ -1,0 +1,88 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+
+	"github.com/s4na/lazymcp/internal/backend"
+	"github.com/s4na/lazymcp/internal/config"
+	"github.com/s4na/lazymcp/internal/mcp"
+)
+
+type Server struct {
+	cfg        *config.Config
+	codec      *mcp.Codec
+	backends   *backend.Manager
+	initParams json.RawMessage
+}
+
+func New(cfg *config.Config, stdin io.Reader, stdout io.Writer, stderr io.Writer) *Server {
+	return &Server{
+		cfg:      cfg,
+		codec:    mcp.NewCodec(stdin, stdout),
+		backends: backend.NewManager(stderr),
+	}
+}
+
+func (s *Server) Run(ctx context.Context) error {
+	defer s.backends.Shutdown()
+	for {
+		msg, err := s.codec.Read()
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
+		if msg.ID == nil {
+			continue
+		}
+		if err := s.handle(ctx, msg); err != nil {
+			return err
+		}
+	}
+}
+
+func (s *Server) handle(ctx context.Context, msg mcp.Message) error {
+	switch msg.Method {
+	case "initialize":
+		s.initParams = msg.Params
+		return s.codec.Write(mcp.NewResult(msg.ID, map[string]any{
+			"protocolVersion": "2024-11-05",
+			"serverInfo": map[string]any{
+				"name":    "lazymcp",
+				"version": "0.1.0",
+			},
+			"capabilities": map[string]any{
+				"tools": map[string]any{"listChanged": false},
+			},
+		}))
+	case "tools/list":
+		return s.codec.Write(mcp.NewResult(msg.ID, map[string]any{"tools": s.cfg.Tools()}))
+	case "tools/call":
+		return s.handleToolCall(ctx, msg)
+	default:
+		return s.codec.Write(mcp.NewError(msg.ID, -32601, "method not found"))
+	}
+}
+
+func (s *Server) handleToolCall(ctx context.Context, msg mcp.Message) error {
+	var params struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	if err := json.Unmarshal(msg.Params, &params); err != nil {
+		return s.codec.Write(mcp.NewError(msg.ID, -32602, "invalid tools/call params"))
+	}
+	serverName, srv, backendToolName, ok := s.cfg.ServerForTool(params.Name)
+	if !ok {
+		return s.codec.Write(mcp.NewError(msg.ID, -32602, "unknown tool namespace"))
+	}
+	result, callErr := s.backends.Call(ctx, serverName, srv, backendToolName, params.Arguments, s.initParams)
+	if callErr != nil {
+		return s.codec.Write(mcp.Message{JSONRPC: "2.0", ID: msg.ID, Error: callErr})
+	}
+	return s.codec.Write(mcp.NewResult(msg.ID, result))
+}
