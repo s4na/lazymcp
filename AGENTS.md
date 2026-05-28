@@ -11,3 +11,4 @@ Prioritize tests by behavioral risk, not by package names alone. Trace the value
 5. Add regression tests with the bug fix. Each bug fix should include the smallest test that fails before the fix and passes after it.
 6. Avoid coverage-only tests. Coverage is checked in GitHub Actions to reveal gaps, but new tests should assert useful behavior and edge cases.
 7. Run `go test ./... -covermode=atomic -coverpkg=./... -coverprofile=coverage.out` before opening or updating a pull request when the change affects runtime behavior.
+8. After opening or updating a pull request, check the GitHub Actions results for that PR and confirm that the CI and security workflows complete successfully.

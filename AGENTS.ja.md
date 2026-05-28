@@ -11,3 +11,4 @@
 5. bug fixにはregression testを追加する。修正前に失敗し、修正後に通る最小のtestを書く。
 6. coverageのためだけのtestは避ける。coverageはGitHub Actionsでgapを見つけるために確認するが、新しいtestでは有用な振る舞いとedge caseをassertする。
 7. runtime behaviorに影響する変更では、PR作成または更新前に `go test ./... -covermode=atomic -coverpkg=./... -coverprofile=coverage.out` を実行する。
+8. PRを作成または更新した後、そのPRのGitHub Actions実行結果を確認し、CIとsecurity workflowが成功していることを確かめる。
