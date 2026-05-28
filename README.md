@@ -17,7 +17,8 @@ go install github.com/s4na/lazymcp/cmd/lazymcp@latest
 
 ## Usage
 
-Import the MCP servers already configured in Codex and register `lazymcp` as the only Codex MCP server:
+Import the MCP servers already configured in Codex. With `--write`, interactive terminals ask
+whether to register `lazymcp` as the only Codex MCP server after the import:
 
 ```bash
 lazymcp migrate codex --write
@@ -31,7 +32,8 @@ to make both Codex CLI and Codex app use only `lazymcp` for MCP:
 Register lazymcp as the only MCP server in the source client? [y/N] yes
 ```
 
-For unattended setup, use `-y` to write the lazymcp config and accept the Codex registration prompt:
+For unattended setup, use `-y` to write the lazymcp config and auto-approve Codex registration
+without prompting:
 
 ```bash
 lazymcp migrate codex -y
@@ -178,7 +180,7 @@ lazymcp migrate codex --write --config ~/.config/lazymcp/config.yaml
 
 With `--write`, interactive terminals ask whether to replace Codex's direct MCP server entries
 with a single `lazymcp` proxy entry. Use `--register-client` to make that replacement explicitly,
-or `-y` to write the lazymcp config and accept the registration prompt in one step:
+or `-y` to write the lazymcp config and auto-approve registration without prompting:
 
 ```bash
 lazymcp migrate codex -y
