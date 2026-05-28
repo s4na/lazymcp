@@ -68,6 +68,25 @@ func TestManagerMarksShutdownReason(t *testing.T) {
 	}
 }
 
+func TestManagerMarksUnrequestedExitAsCrashed(t *testing.T) {
+	startCountPath := t.TempDir() + "/starts"
+	manager := NewManager(os.Stderr)
+	srv := helperServerWithEnv(startCountPath, "LAZYMCP_EXIT_AFTER_INITIALIZED=1")
+	if _, err := manager.get(context.Background(), "test", srv, nil); err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	waitForState(t, manager, "test", StatusCrashed)
+
+	state := manager.States([]string{"test"})["test"]
+	if state.StopReason != StopReasonCrashed {
+		t.Fatalf("stop reason = %s, want %s", state.StopReason, StopReasonCrashed)
+	}
+	if state.LastError == "" {
+		t.Fatalf("expected last error for unexpected exit")
+	}
+}
+
 func TestHelperProcess(t *testing.T) {
 	if os.Getenv("GO_WANT_HELPER_PROCESS") != "1" {
 		return
@@ -88,6 +107,9 @@ func TestHelperProcess(t *testing.T) {
 				"serverInfo":      map[string]any{"name": "helper", "version": "test"},
 			}))
 		case "notifications/initialized":
+			if os.Getenv("LAZYMCP_EXIT_AFTER_INITIALIZED") == "1" {
+				os.Exit(0)
+			}
 		case "tools/call":
 			_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{"content": []map[string]any{
 				{"type": "text", "text": "ok"},
@@ -99,15 +121,19 @@ func TestHelperProcess(t *testing.T) {
 }
 
 func helperServer(startCountPath string) config.Server {
+	return helperServerWithEnv(startCountPath)
+}
+
+func helperServerWithEnv(startCountPath string, extraEnv ...string) config.Server {
+	args := []string{
+		"GO_WANT_HELPER_PROCESS=1",
+		"LAZYMCP_START_COUNT_PATH=" + startCountPath,
+	}
+	args = append(args, extraEnv...)
+	args = append(args, os.Args[0], "-test.run=TestHelperProcess", "--")
 	return config.Server{
-		Command: "env",
-		Args: []string{
-			"GO_WANT_HELPER_PROCESS=1",
-			"LAZYMCP_START_COUNT_PATH=" + startCountPath,
-			os.Args[0],
-			"-test.run=TestHelperProcess",
-			"--",
-		},
+		Command:        "env",
+		Args:           args,
 		IdleTimeout:    config.Duration(time.Minute),
 		RequestTimeout: config.Duration(time.Second),
 	}
@@ -115,7 +141,7 @@ func helperServer(startCountPath string) config.Server {
 
 func waitForState(t *testing.T, manager *Manager, name string, want Status) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		state := manager.States([]string{name})[name]
 		if state.Status == want {

@@ -133,7 +133,7 @@ func (m *Manager) reap(name string, proc *Process) {
 		if err != nil {
 			proc.MarkStopped(StopReasonCrashed, err.Error())
 		} else {
-			proc.MarkStopped(StopReasonShutdown, "")
+			proc.MarkStopped(StopReasonCrashed, "backend exited unexpectedly")
 		}
 		state = proc.Snapshot()
 	}
