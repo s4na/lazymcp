@@ -27,4 +27,24 @@ jobs:
         run: test -z "$(gofmt -l .)"
 
       - name: Test
-        run: go test ./...
+        run: go test ./... -covermode=atomic -coverpkg=./... -coverprofile=coverage.out
+
+      - name: Report coverage
+        run: |
+          go tool cover -func=coverage.out | tee coverage.txt
+          {
+            echo '## Go coverage'
+            echo
+            echo '```text'
+            cat coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: go-coverage
+          path: |
+            coverage.out
+            coverage.txt
+          if-no-files-found: error
