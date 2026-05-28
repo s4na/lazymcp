@@ -23,12 +23,13 @@ type Route struct {
 }
 
 type Server struct {
-	Command        string   `yaml:"command"`
-	Args           []string `yaml:"args"`
-	Namespace      string   `yaml:"namespace"`
-	IdleTimeout    Duration `yaml:"idle_timeout"`
-	RequestTimeout Duration `yaml:"request_timeout"`
-	Tools          []Tool   `yaml:"tools"`
+	Command        string            `yaml:"command"`
+	Args           []string          `yaml:"args"`
+	Env            map[string]string `yaml:"env,omitempty"`
+	Namespace      string            `yaml:"namespace"`
+	IdleTimeout    Duration          `yaml:"idle_timeout"`
+	RequestTimeout Duration          `yaml:"request_timeout"`
+	Tools          []Tool            `yaml:"tools"`
 }
 
 type Tool struct {

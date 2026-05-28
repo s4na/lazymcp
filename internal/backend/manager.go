@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -104,6 +106,9 @@ type Process struct {
 
 func Start(ctx context.Context, srv config.Server, stderr io.Writer) (*Process, error) {
 	cmd := exec.CommandContext(ctx, srv.Command, srv.Args...)
+	if len(srv.Env) > 0 {
+		cmd.Env = append(os.Environ(), envList(srv.Env)...)
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, err
@@ -125,6 +130,15 @@ func Start(ctx context.Context, srv config.Server, stderr io.Writer) (*Process, 
 	}
 	p.resetIdleTimer()
 	return p, nil
+}
+
+func envList(env map[string]string) []string {
+	out := make([]string, 0, len(env))
+	for key, value := range env {
+		out = append(out, key+"="+value)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (p *Process) Initialize(ctx context.Context, params json.RawMessage) error {

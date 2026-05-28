@@ -25,4 +25,11 @@ func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error {
 	return nil
 }
 
+func (d Duration) MarshalYAML() (any, error) {
+	if d == 0 {
+		return nil, nil
+	}
+	return time.Duration(d).String(), nil
+}
+
 type Duration time.Duration

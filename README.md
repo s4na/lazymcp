@@ -57,3 +57,29 @@ args = ["serve", "--config", "/path/to/config.yaml"]
 
 Backend tools are exposed with their namespace prefix, such as `github.search_repositories`.
 The backend process is started on the first matching `tools/call` and stopped after its idle timeout.
+
+## Migrate Client MCP Settings
+
+Preview MCP servers already configured in Codex:
+
+```bash
+lazymcp migrate codex --dry-run
+```
+
+Preview Claude Code settings, including project-local files:
+
+```bash
+lazymcp migrate claude --dry-run --project /path/to/project
+```
+
+Write imported servers into the lazymcp config:
+
+```bash
+lazymcp migrate codex --write --config ~/.config/lazymcp/config.yaml
+```
+
+`--write` safely merges server entries and creates a timestamped backup before replacing an existing lazymcp config. If a server name or namespace already exists, the migration stops with a deterministic conflict report. Use `--overwrite` only when you intentionally want the imported entry to replace the existing one.
+
+Dry-run reports mask environment values so tokens and secrets are not printed. Imported servers do not include tool schemas because Codex and Claude Code MCP settings only contain backend launch commands; add `tools:` entries after migration or discover them with your usual MCP tooling.
+
+After migration, remove direct backend MCP servers from Codex or Claude Code and leave only the lazymcp proxy entry.
