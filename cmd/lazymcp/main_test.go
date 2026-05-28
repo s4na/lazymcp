@@ -59,7 +59,7 @@ command = "npx"
 	}
 }
 
-func TestMigrateCodexWriteCreatesConfig(t *testing.T) {
+func TestMigrateWriteCreatesConfigAndRegistersProxy(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")
 	target := filepath.Join(dir, "lazymcp.yaml")
@@ -78,7 +78,7 @@ args = ["-y", "github"]
 	cmd.SetErr(&out)
 	cmd.SetArgs([]string{
 		"--config", target,
-		"migrate", "--source-path", source, "--write", "codex",
+		"migrate", "--source-path", source, "--write",
 	})
 
 	if err := cmd.Execute(); err != nil {
@@ -185,7 +185,7 @@ command = "npx"
 	}
 }
 
-func TestMigrateCodexRejectsUnexpectedArgs(t *testing.T) {
+func TestMigrateRejectsUnexpectedArgs(t *testing.T) {
 	cmd := newRootCommand()
 	var out bytes.Buffer
 	cmd.SetOut(&out)

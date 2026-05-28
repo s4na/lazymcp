@@ -18,7 +18,7 @@ go install github.com/s4na/lazymcp/cmd/lazymcp@latest
 ## 使い方
 
 Codex にすでに設定されている MCP サーバーをインポートします。
-`--write` を指定すると、インポート後に `lazymcp` だけを Codex の MCP サーバーとして登録します。
+`--write` を指定すると、インポートしたサーバーを lazymcp 設定に書き込み、`lazymcp` だけを Codex の MCP サーバーとして登録します。
 
 ```bash
 lazymcp migrate --write
