@@ -58,6 +58,63 @@ args = ["serve", "--config", "/path/to/config.yaml"]
 Backend tools are exposed with their namespace prefix, such as `github.search_repositories`.
 The backend process is started on the first matching `tools/call` and stopped after its idle timeout.
 
+### Backend commands
+
+`command` is the executable to spawn, and `args` are passed to it directly.
+This means package runners such as `npx`, `uvx`, `uv run`, and `mise exec` can be used as backend launchers:
+
+```yaml
+servers:
+  filesystem:
+    command: npx
+    args:
+      - -y
+      - "@modelcontextprotocol/server-filesystem"
+      - /path/to/root
+```
+
+```yaml
+servers:
+  python_tools:
+    command: uvx
+    args:
+      - example-mcp-server
+```
+
+```yaml
+servers:
+  local_python:
+    command: uv
+    args:
+      - run
+      - python
+      - -m
+      - my_mcp_server
+```
+
+```yaml
+servers:
+  mise_managed:
+    command: mise
+    args:
+      - exec
+      - --
+      - uvx
+      - example-mcp-server
+```
+
+`lazymcp` does not run backend commands through a shell, so shell syntax is not expanded.
+Write the executable and each argument separately instead of putting the whole command line in `command`:
+
+```yaml
+# Good
+command: uv
+args: ["run", "python", "-m", "my_mcp_server"]
+
+# Not supported
+command: "uv run python -m my_mcp_server"
+```
+
 ## Backend lifecycle
 
 `lazymcp serve` manages backend MCP processes inside the current stdio session.
