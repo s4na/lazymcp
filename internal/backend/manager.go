@@ -44,6 +44,23 @@ func (m *Manager) Call(ctx context.Context, serverName string, srv config.Server
 	return proc.Call(ctx, toolName, args)
 }
 
+func (m *Manager) ListTools(ctx context.Context, serverName string, srv config.Server, initParams json.RawMessage) ([]config.Tool, *mcp.Error) {
+	proc, err := m.get(ctx, serverName, srv, initParams)
+	if err != nil {
+		return nil, &mcp.Error{Code: -32000, Message: err.Error()}
+	}
+	tools, listErr := proc.ListTools(ctx)
+	if listErr == nil || listErr.Code != -32000 {
+		return tools, listErr
+	}
+	m.remove(serverName, proc, StopReasonCrashed, listErr.Message)
+	proc, err = m.get(ctx, serverName, srv, initParams)
+	if err != nil {
+		return nil, &mcp.Error{Code: -32000, Message: err.Error()}
+	}
+	return proc.ListTools(ctx)
+}
+
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -254,6 +271,57 @@ func (p *Process) Call(ctx context.Context, toolName string, args json.RawMessag
 		return nil, resp.Error
 	}
 	return resp.Result, nil
+}
+
+func (p *Process) ListTools(ctx context.Context) ([]config.Tool, *mcp.Error) {
+	var tools []config.Tool
+	var cursor *string
+	seenCursors := map[string]bool{}
+	for {
+		page, nextCursor, listErr := p.listToolsPage(ctx, cursor)
+		if listErr != nil {
+			return nil, listErr
+		}
+		tools = append(tools, page...)
+		if nextCursor == nil {
+			return tools, nil
+		}
+		if seenCursors[*nextCursor] {
+			return nil, &mcp.Error{Code: -32000, Message: "backend returned repeated tools/list cursor"}
+		}
+		seenCursors[*nextCursor] = true
+		cursor = nextCursor
+	}
+}
+
+func (p *Process) listToolsPage(ctx context.Context, cursor *string) ([]config.Tool, *string, *mcp.Error) {
+	var params json.RawMessage
+	if cursor != nil {
+		raw, err := json.Marshal(map[string]any{"cursor": *cursor})
+		if err != nil {
+			return nil, nil, &mcp.Error{Code: -32000, Message: err.Error()}
+		}
+		params = raw
+	}
+	resp, err := p.request(ctx, "tools/list", params)
+	if err != nil {
+		return nil, nil, &mcp.Error{Code: -32000, Message: err.Error()}
+	}
+	if resp.Error != nil {
+		return nil, nil, resp.Error
+	}
+	var result struct {
+		Tools      []config.Tool `json:"tools"`
+		NextCursor *string       `json:"nextCursor"`
+	}
+	data, err := json.Marshal(resp.Result)
+	if err != nil {
+		return nil, nil, &mcp.Error{Code: -32000, Message: err.Error()}
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, nil, &mcp.Error{Code: -32000, Message: "invalid tools/list result: " + err.Error()}
+	}
+	return result.Tools, result.NextCursor, nil
 }
 
 func (p *Process) request(ctx context.Context, method string, params json.RawMessage) (mcp.Message, error) {

@@ -63,16 +63,23 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config must define at least one server")
 	}
 
+	if err := cfg.rebuildRoutes(); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
+}
+
+func (c *Config) rebuildRoutes() error {
 	namespaces := map[string]string{}
 	toolNames := map[string]string{}
 	routes := map[string]Route{}
-	for name, srv := range cfg.Servers {
+	for name, srv := range c.Servers {
 		if srv.Command == "" {
-			return nil, fmt.Errorf("server %q command is required", name)
+			return fmt.Errorf("server %q command is required", name)
 		}
 		namespace := srv.NamespaceOrName(name)
 		if existing := namespaces[namespace]; existing != "" {
-			return nil, fmt.Errorf("namespace %q is used by both %q and %q", namespace, existing, name)
+			return fmt.Errorf("namespace %q is used by both %q and %q", namespace, existing, name)
 		}
 		namespaces[namespace] = name
 		if srv.IdleTimeout == 0 {
@@ -84,15 +91,15 @@ func Load(path string) (*Config, error) {
 		for _, tool := range srv.Tools {
 			exposedName := namespace + "." + strings.TrimPrefix(tool.Name, namespace+".")
 			if existing := toolNames[exposedName]; existing != "" {
-				return nil, fmt.Errorf("tool %q is exposed by both %q and %q", exposedName, existing, name)
+				return fmt.Errorf("tool %q is exposed by both %q and %q", exposedName, existing, name)
 			}
 			toolNames[exposedName] = name
 			routes[exposedName] = Route{ServerName: name, Server: srv, BackendTool: strings.TrimPrefix(tool.Name, namespace+".")}
 		}
-		cfg.Servers[name] = srv
+		c.Servers[name] = srv
 	}
-	cfg.routes = routes
-	return &cfg, nil
+	c.routes = routes
+	return nil
 }
 
 func (c *Config) Tools() []Tool {
@@ -119,6 +126,23 @@ func (c *Config) ServerForTool(toolName string) (string, Server, string, bool) {
 		return route.ServerName, route.Server, route.BackendTool, ok
 	}
 	return "", Server{}, "", false
+}
+
+func (c *Config) SetServerTools(name string, tools []Tool) error {
+	srv, ok := c.Servers[name]
+	if !ok {
+		return fmt.Errorf("unknown server %q", name)
+	}
+	previous := srv.Tools
+	srv.Tools = append([]Tool(nil), tools...)
+	c.Servers[name] = srv
+	if err := c.rebuildRoutes(); err != nil {
+		srv.Tools = previous
+		c.Servers[name] = srv
+		_ = c.rebuildRoutes()
+		return err
+	}
+	return nil
 }
 
 func (c *Config) ServerNames() []string {

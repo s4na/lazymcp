@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,13 +178,72 @@ args = ["serve", "--config", "/tmp/lazymcp.yaml"]
 		t.Fatalf("write source: %v", err)
 	}
 
-	_, err = Run(Options{
+	plan, err := Run(Options{
 		Source:     SourceCodex,
 		ConfigPath: filepath.Join(dir, "lazymcp.yaml"),
 		SourcePath: source,
 	})
-	if err == nil || !strings.Contains(err.Error(), "no Codex MCP servers to import") {
-		t.Fatalf("error = %v", err)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(plan.Servers) != 0 || len(plan.Skipped) != 1 {
+		t.Fatalf("plan = %#v, want only skipped lazymcp proxy", plan)
+	}
+}
+
+func TestRunCodexYesIsIdempotentWhenSourceAlreadyUsesLazyProxy(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(fmt.Sprintf(`
+[mcp_servers.lazymcp]
+command = "lazymcp"
+args = ["serve", "--config", %q]
+`, target)), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   target,
+		SourcePath:   source,
+		Write:        true,
+		UpdateClient: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(plan.ChangedFiles) != 0 || len(plan.Backups) != 0 {
+		t.Fatalf("plan changed files/backups = %#v/%#v, want no-op", plan.ChangedFiles, plan.Backups)
+	}
+}
+
+func TestRunCodexYesTreatsEquivalentLazyProxyConfigPathAsNoop(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	source := filepath.Join(dir, "config.toml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.lazymcp]
+command = "lazymcp"
+args = ["serve", "--config", "./lazymcp.yaml"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   "lazymcp.yaml",
+		SourcePath:   source,
+		Write:        true,
+		UpdateClient: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(plan.ChangedFiles) != 0 || len(plan.Backups) != 0 {
+		t.Fatalf("plan changed files/backups = %#v/%#v, want no-op", plan.ChangedFiles, plan.Backups)
 	}
 }
 
@@ -228,6 +288,192 @@ servers:
 	got := string(data)
 	if !strings.Contains(got, "github:") || !strings.Contains(got, "filesystem:") {
 		t.Fatalf("merged config missing servers:\n%s", got)
+	}
+}
+
+func TestRunWriteIsIdempotentForAlreadyImportedServer(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	err = os.WriteFile(target, []byte(`
+servers:
+  github:
+    command: npx
+    args:
+      - -y
+      - github
+    namespace: github
+    idle_timeout: 5m0s
+    request_timeout: 10m0s
+    tools:
+      - name: search
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: target,
+		SourcePath: source,
+		Write:      true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(plan.ChangedFiles) != 0 || len(plan.Backups) != 0 {
+		t.Fatalf("plan changed files/backups = %#v/%#v, want no-op", plan.ChangedFiles, plan.Backups)
+	}
+	cfg, err := readLazyConfig(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if len(cfg.Servers["github"].Tools) != 1 {
+		t.Fatalf("existing tools were not preserved: %#v", cfg.Servers["github"].Tools)
+	}
+}
+
+func TestRunWriteRemovesLazyProxyFromTargetConfig(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	err = os.WriteFile(target, []byte(fmt.Sprintf(`
+servers:
+  lazymcp:
+    command: lazymcp
+    args:
+      - serve
+      - --config
+      - %s
+  filesystem:
+    command: npx
+    namespace: filesystem
+`, target)), 0o600)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	_, err = Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: target,
+		SourcePath: source,
+		Write:      true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	cfg, err := readLazyConfig(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if _, ok := cfg.Servers["lazymcp"]; ok {
+		t.Fatalf("target config still contains lazymcp proxy: %#v", cfg.Servers)
+	}
+	if _, ok := cfg.Servers["github"]; !ok {
+		t.Fatalf("target config missing imported github server: %#v", cfg.Servers)
+	}
+}
+
+func TestRunWriteDoesNotRemoveLazyProxyForAnotherConfig(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	otherTarget := filepath.Join(dir, "other-lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	err = os.WriteFile(target, []byte(fmt.Sprintf(`
+servers:
+  nested_proxy:
+    command: lazymcp
+    args:
+      - serve
+      - --config
+      - %s
+`, otherTarget)), 0o600)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	_, err = Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: target,
+		SourcePath: source,
+		Write:      true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	cfg, err := readLazyConfig(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if _, ok := cfg.Servers["nested_proxy"]; !ok {
+		t.Fatalf("non-self lazymcp proxy was removed: %#v", cfg.Servers)
+	}
+}
+
+func TestRunWriteReplacesSameNameLazySelfProxyWithoutConflict(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	err = os.WriteFile(target, []byte(fmt.Sprintf(`
+servers:
+  github:
+    command: lazymcp
+    args:
+      - serve
+      - --config
+      - %s
+`, target)), 0o600)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	_, err = Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: target,
+		SourcePath: source,
+		Write:      true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	cfg, err := readLazyConfig(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if got := cfg.Servers["github"].Command; got != "npx" {
+		t.Fatalf("github command = %q, want imported npx server", got)
 	}
 }
 
@@ -289,6 +535,83 @@ args = ["-y", "filesystem", "/tmp"]
 	}
 	if !strings.Contains(got, `args = ['serve', '--config',`) && !strings.Contains(got, `args = ["serve", "--config",`) {
 		t.Fatalf("codex config missing serve args:\n%s", got)
+	}
+	if !strings.Contains(got, `[projects.'/tmp/repo']`) && !strings.Contains(got, `[projects."/tmp/repo"]`) {
+		t.Fatalf("codex config did not preserve non-MCP settings:\n%s", got)
+	}
+}
+
+func TestRunWriteRegistersProxyAndRemovesImportedCodexServersWhenTargetAlreadyHasSome(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[projects."/tmp/repo"]
+trust_level = "trusted"
+
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github"]
+
+[mcp_servers.filesystem]
+command = "npx"
+args = ["-y", "filesystem", "/tmp"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	err = os.WriteFile(target, []byte(`
+servers:
+  github:
+    command: npx
+    args:
+      - -y
+      - github
+    namespace: github
+    idle_timeout: 5m0s
+    request_timeout: 10m0s
+    tools:
+      - name: search
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   target,
+		SourcePath:   source,
+		Write:        true,
+		UpdateClient: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(plan.ChangedFiles) != 2 {
+		t.Fatalf("changed files = %#v, want target and source", plan.ChangedFiles)
+	}
+
+	cfg, err := readLazyConfig(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if len(cfg.Servers["github"].Tools) != 1 {
+		t.Fatalf("existing github tools were not preserved: %#v", cfg.Servers["github"].Tools)
+	}
+	if _, ok := cfg.Servers["filesystem"]; !ok {
+		t.Fatalf("target config missing newly imported filesystem server: %#v", cfg.Servers)
+	}
+
+	codexConfig, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	got := string(codexConfig)
+	if strings.Contains(got, "[mcp_servers.github]") || strings.Contains(got, "[mcp_servers.filesystem]") {
+		t.Fatalf("codex config kept migrated direct MCP servers:\n%s", got)
+	}
+	if !strings.Contains(got, "[mcp_servers.lazymcp]") {
+		t.Fatalf("codex config missing lazymcp proxy:\n%s", got)
 	}
 	if !strings.Contains(got, `[projects.'/tmp/repo']`) && !strings.Contains(got, `[projects."/tmp/repo"]`) {
 		t.Fatalf("codex config did not preserve non-MCP settings:\n%s", got)
