@@ -17,7 +17,40 @@ go install github.com/s4na/lazymcp/cmd/lazymcp@latest
 
 ## 使い方
 
-設定ファイルを作成します。
+Codex にすでに設定されている MCP サーバーをインポートします。
+対話可能な端末で `--write` を指定すると、インポート後に `lazymcp` だけを Codex の MCP サーバーとして登録するか確認します。
+
+```bash
+lazymcp migrate codex --write
+```
+
+既存の Codex MCP サーバーをインポートした後、`lazymcp` は Codex の直接的な MCP サーバー登録を単一の `lazymcp` プロキシエントリに置き換えるか確認します。
+Codex CLI と Codex app の両方で MCP に `lazymcp` だけを使うには、`yes` と答えてください。
+
+```bash
+Register lazymcp as the only MCP server in the source client? [y/N] yes
+```
+
+非対話でセットアップする場合は `-y` を使うと、確認なしで lazymcp 設定を書き込み、Codex 登録も自動承認します。
+
+```bash
+lazymcp migrate codex -y
+```
+
+バックエンドのツールは、`github.search_repositories` のように名前空間のプレフィックス付きで公開されます。
+バックエンドプロセスは、対応する最初の `tools/call` で起動し、アイドルタイムアウト後に停止します。
+
+`lazymcp migrate codex` は Codex の `~/.codex/config.toml` を読み取り、直接登録されている各 `[mcp_servers.<name>]` エントリを `~/.config/lazymcp/config.yaml` に移します。
+既存ファイルを置き換える前には、タイムスタンプ付きのバックアップを作成します。
+変換後の Codex MCP 設定には次のエントリだけが残ります。
+
+```toml
+[mcp_servers.lazymcp]
+command = "lazymcp"
+args = ["serve", "--config", "/path/to/config.yaml"]
+```
+
+Codex にまだ登録されていないサーバーを追加したい場合だけ、lazymcp 設定を手動で作成または編集してください。
 
 ```yaml
 servers:
@@ -40,23 +73,6 @@ servers:
           required:
             - query
 ```
-
-stdio の MCP サーバーとしてプロキシを起動します。
-
-```bash
-lazymcp serve --config config.yaml
-```
-
-Codex には `lazymcp` だけを登録します。
-
-```toml
-[mcp_servers.lazymcp]
-command = "lazymcp"
-args = ["serve", "--config", "/path/to/config.yaml"]
-```
-
-バックエンドのツールは、`github.search_repositories` のように名前空間のプレフィックス付きで公開されます。
-バックエンドプロセスは、対応する最初の `tools/call` で起動し、アイドルタイムアウト後に停止します。
 
 ### バックエンドコマンド
 
@@ -157,9 +173,18 @@ lazymcp migrate codex --dry-run
 lazymcp migrate codex --write --config ~/.config/lazymcp/config.yaml
 ```
 
+`--write` を指定すると、対話可能な端末では Codex の直接的な MCP サーバーエントリを単一の `lazymcp` プロキシエントリに置き換えるか確認します。
+明示的に置き換える場合は `--register-client` を使ってください。
+`-y` を使うと、lazymcp 設定を書き込み、確認なしで登録も自動承認します。
+
+```bash
+lazymcp migrate codex -y
+```
+
 `--write` はサーバーエントリを安全にマージし、既存の lazymcp 設定を置き換える前にタイムスタンプ付きのバックアップを作成します。
 サーバー名または名前空間がすでに存在する場合、移行は決定的な競合レポートを出して停止します。
-同じ名前の既存サーバーをインポートしたエントリで置き換えたいことが明確な場合だけ、`--overwrite` を使ってください。別のサーバーとの名前空間の競合がある場合は、引き続き移行を停止します。
+同じ名前の既存サーバーをインポートしたエントリで置き換えたいことが明確な場合だけ、`--overwrite` を使ってください。
+別のサーバーとの名前空間の競合がある場合は、引き続き移行を停止します。
 
 移行処理は Codex の `~/.codex/config.toml` を読み取り、インポート前に `[mcp_servers.<name>]` テーブルが含まれていることを検証します。
 各テーブルには、文字列の `command`、任意の文字列配列 `args`、任意の文字列値テーブル `env` を指定できます。
@@ -168,7 +193,8 @@ lazymcp migrate codex --write --config ~/.config/lazymcp/config.yaml
 インポートしたサーバーにはツールスキーマは含まれません。Codex の MCP 設定にはバックエンドの起動コマンドしか含まれていないためです。
 移行後に `tools:` エントリを追加するか、普段使っている MCP ツールで検出してください。
 
-移行後は、Codex から直接登録しているバックエンド MCP サーバーを削除し、lazymcp プロキシのエントリだけを残してください。
+Codex 登録が有効な場合、元の Codex 設定はバックアップされ、`[mcp_servers]` には `lazymcp` だけが残るように書き換えられます。
+その他の Codex 設定は保持されます。
 
 ## ライセンス
 

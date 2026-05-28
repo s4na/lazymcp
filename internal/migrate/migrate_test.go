@@ -231,6 +231,92 @@ servers:
 	}
 }
 
+func TestRunWriteCanReplaceCodexMCPServersWithLazyProxy(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "nested", "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[projects."/tmp/repo"]
+trust_level = "trusted"
+
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github"]
+
+[mcp_servers.filesystem]
+command = "npx"
+args = ["-y", "filesystem", "/tmp"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   target,
+		SourcePath:   source,
+		Write:        true,
+		UpdateClient: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(plan.ChangedFiles) != 2 {
+		t.Fatalf("changed files = %#v", plan.ChangedFiles)
+	}
+	if len(plan.Backups) != 1 || !strings.HasPrefix(plan.Backups[0], source+".bak.") {
+		t.Fatalf("backups = %#v", plan.Backups)
+	}
+
+	lazyConfig, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if !strings.Contains(string(lazyConfig), "github:") || !strings.Contains(string(lazyConfig), "filesystem:") {
+		t.Fatalf("lazymcp config missing imported servers:\n%s", string(lazyConfig))
+	}
+
+	codexConfig, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	got := string(codexConfig)
+	if strings.Contains(got, "[mcp_servers.github]") || strings.Contains(got, "[mcp_servers.filesystem]") {
+		t.Fatalf("codex config kept direct MCP servers:\n%s", got)
+	}
+	if !strings.Contains(got, "[mcp_servers.lazymcp]") {
+		t.Fatalf("codex config missing lazymcp proxy:\n%s", got)
+	}
+	if !strings.Contains(got, `args = ['serve', '--config',`) && !strings.Contains(got, `args = ["serve", "--config",`) {
+		t.Fatalf("codex config missing serve args:\n%s", got)
+	}
+	if !strings.Contains(got, `[projects.'/tmp/repo']`) && !strings.Contains(got, `[projects."/tmp/repo"]`) {
+		t.Fatalf("codex config did not preserve non-MCP settings:\n%s", got)
+	}
+}
+
+func TestRunUpdateClientRequiresWrite(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	_, err = Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   filepath.Join(dir, "lazymcp.yaml"),
+		SourcePath:   source,
+		UpdateClient: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "requires --write") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestRunWriteCreatesNewConfigWithParentDir(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")

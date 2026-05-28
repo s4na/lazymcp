@@ -90,6 +90,84 @@ args = ["-y", "github"]
 	}
 }
 
+func TestMigrateCodexYesCreatesConfigAndRegistersProxy(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	cmd := newRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"--config", target,
+		"migrate", "--source-path", source, "-y", "codex",
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	codexConfig, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	got := string(codexConfig)
+	if strings.Contains(got, "[mcp_servers.github]") {
+		t.Fatalf("source config kept direct server:\n%s", got)
+	}
+	if !strings.Contains(got, "[mcp_servers.lazymcp]") {
+		t.Fatalf("source config missing lazymcp:\n%s", got)
+	}
+	if !strings.Contains(out.String(), "backups created:") {
+		t.Fatalf("output did not report backup:\n%s", out.String())
+	}
+}
+
+func TestMigrateCodexPromptCanRegisterProxy(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	cmd := newRootCommand()
+	var out bytes.Buffer
+	cmd.SetIn(strings.NewReader("yes\n"))
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"--config", target,
+		"migrate", "--source-path", source, "--write", "codex",
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(out.String(), "Register lazymcp as the only MCP server") {
+		t.Fatalf("output did not prompt:\n%s", out.String())
+	}
+	codexConfig, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if !strings.Contains(string(codexConfig), "[mcp_servers.lazymcp]") {
+		t.Fatalf("source config missing lazymcp:\n%s", string(codexConfig))
+	}
+}
+
 func TestMigrateCodexRejectsUnexpectedArgs(t *testing.T) {
 	cmd := newRootCommand()
 	var out bytes.Buffer
