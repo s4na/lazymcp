@@ -230,6 +230,54 @@ servers:
 	}
 }
 
+func TestRunWriteCreatesNewConfigWithParentDir(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "nested", "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github"]
+
+[mcp_servers.github.env]
+GITHUB_TOKEN = "secret-token"
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: target,
+		SourcePath: source,
+		Write:      true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(plan.Backups) != 0 {
+		t.Fatalf("backups = %#v, want none", plan.Backups)
+	}
+	if len(plan.ChangedFiles) != 1 || plan.ChangedFiles[0] != target {
+		t.Fatalf("changed files = %#v", plan.ChangedFiles)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat target: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("target permissions = %o, want 600", got)
+	}
+	cfg, err := readLazyConfig(target)
+	if err != nil {
+		t.Fatalf("read written config: %v", err)
+	}
+	srv := cfg.Servers["github"]
+	if srv.Command != "npx" || len(srv.Args) != 2 || srv.Env["GITHUB_TOKEN"] != "secret-token" {
+		t.Fatalf("written server = %#v", srv)
+	}
+}
+
 func TestRunWriteRestrictsExistingConfigPermissions(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")
@@ -268,6 +316,48 @@ servers:
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("target permissions = %o, want 600", got)
+	}
+}
+
+func TestRunOverwriteReplacesMatchingServer(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	err = os.WriteFile(target, []byte(`
+servers:
+  github:
+    command: old
+    namespace: github
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	_, err = Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: target,
+		SourcePath: source,
+		Write:      true,
+		Overwrite:  true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	cfg, err := readLazyConfig(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	srv := cfg.Servers["github"]
+	if srv.Command != "npx" || len(srv.Args) != 2 {
+		t.Fatalf("server was not overwritten: %#v", srv)
 	}
 }
 
@@ -346,6 +436,42 @@ servers:
 		t.Fatalf("expected conflict")
 	}
 	if plan == nil || len(plan.Conflicts) != 1 {
+		t.Fatalf("conflicts = %#v", plan)
+	}
+}
+
+func TestRunRejectsNamespaceConflictEvenWithOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	err = os.WriteFile(target, []byte(`
+servers:
+  filesystem:
+    command: npx
+    namespace: github
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: target,
+		SourcePath: source,
+		Write:      true,
+		Overwrite:  true,
+	})
+	if err == nil {
+		t.Fatalf("expected namespace conflict")
+	}
+	if plan == nil || len(plan.Conflicts) != 1 || !strings.Contains(plan.Conflicts[0], "namespace") {
 		t.Fatalf("conflicts = %#v", plan)
 	}
 }

@@ -53,6 +53,43 @@ command = "npx"
 	}
 }
 
+func TestMigrateCodexWriteCreatesConfig(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	cmd := newRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"--config", target,
+		"migrate", "--source-path", source, "--write", "codex",
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(out.String(), "files changed:") {
+		t.Fatalf("output did not report changed files:\n%s", out.String())
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if !strings.Contains(string(data), "github:") {
+		t.Fatalf("target config missing github server:\n%s", string(data))
+	}
+}
+
 func TestMigrateCodexRejectsUnexpectedArgs(t *testing.T) {
 	cmd := newRootCommand()
 	var out bytes.Buffer
