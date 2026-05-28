@@ -18,10 +18,11 @@ type Manager struct {
 	stderr io.Writer
 	mu     sync.Mutex
 	procs  map[string]*Process
+	states map[string]State
 }
 
 func NewManager(stderr io.Writer) *Manager {
-	return &Manager{stderr: stderr, procs: map[string]*Process{}}
+	return &Manager{stderr: stderr, procs: map[string]*Process{}, states: map[string]State{}}
 }
 
 func (m *Manager) Call(ctx context.Context, serverName string, srv config.Server, toolName string, args json.RawMessage, initParams json.RawMessage) (any, *mcp.Error) {
@@ -33,7 +34,7 @@ func (m *Manager) Call(ctx context.Context, serverName string, srv config.Server
 	if callErr == nil || callErr.Code != -32000 {
 		return result, callErr
 	}
-	m.remove(serverName, proc)
+	m.remove(serverName, proc, StopReasonCrashed, callErr.Message)
 	proc, err = m.get(ctx, serverName, srv, initParams)
 	if err != nil {
 		return nil, &mcp.Error{Code: -32000, Message: err.Error()}
@@ -45,9 +46,59 @@ func (m *Manager) Shutdown() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for name, proc := range m.procs {
-		proc.Stop()
+		proc.Stop(StopReasonShutdown, "")
+		m.recordStoppedLocked(name, proc.Snapshot())
 		delete(m.procs, name)
 	}
+}
+
+type Status string
+
+const (
+	StatusStopped     Status = "stopped"
+	StatusRunning     Status = "running"
+	StatusCrashed     Status = "crashed"
+	StatusIdleStopped Status = "idle-stopped"
+)
+
+type StopReason string
+
+const (
+	StopReasonNone           StopReason = ""
+	StopReasonCrashed        StopReason = "crashed"
+	StopReasonIdleTimeout    StopReason = "idle-timeout"
+	StopReasonRequestTimeout StopReason = "request-timeout"
+	StopReasonShutdown       StopReason = "shutdown"
+)
+
+type State struct {
+	Status      Status
+	LastStarted time.Time
+	LastStopped time.Time
+	StopReason  StopReason
+	LastError   string
+}
+
+func NewStoppedState() State {
+	return State{Status: StatusStopped}
+}
+
+func (m *Manager) States(serverNames []string) map[string]State {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	states := make(map[string]State, len(serverNames))
+	for _, name := range serverNames {
+		state, ok := m.states[name]
+		if !ok {
+			state = NewStoppedState()
+		}
+		if proc := m.procs[name]; proc != nil {
+			state = proc.Snapshot()
+		}
+		states[name] = state
+	}
+	return states
 }
 
 func (m *Manager) get(ctx context.Context, name string, srv config.Server, initParams json.RawMessage) (*Process, error) {
@@ -58,11 +109,14 @@ func (m *Manager) get(ctx context.Context, name string, srv config.Server, initP
 	}
 	proc, err := Start(ctx, srv, m.stderr)
 	if err != nil {
+		m.recordStartErrorLocked(name, err)
 		return nil, err
 	}
+	m.states[name] = proc.Snapshot()
 	if err := proc.Initialize(ctx, initParams); err != nil {
-		proc.Stop()
+		proc.Stop(StopReasonCrashed, err.Error())
 		proc.Wait()
+		m.recordStoppedLocked(name, proc.Snapshot())
 		return nil, err
 	}
 	m.procs[name] = proc
@@ -71,21 +125,48 @@ func (m *Manager) get(ctx context.Context, name string, srv config.Server, initP
 }
 
 func (m *Manager) reap(name string, proc *Process) {
-	proc.Wait()
+	err := proc.Wait()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	state := proc.Snapshot()
+	if state.Status == StatusRunning {
+		if err != nil {
+			proc.MarkStopped(StopReasonCrashed, err.Error())
+		} else {
+			proc.MarkStopped(StopReasonCrashed, "backend exited unexpectedly")
+		}
+		state = proc.Snapshot()
+	}
 	if m.procs[name] == proc {
+		m.recordStoppedLocked(name, state)
 		delete(m.procs, name)
 	}
 }
 
-func (m *Manager) remove(name string, proc *Process) {
+func (m *Manager) remove(name string, proc *Process, reason StopReason, lastError string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.procs[name] == proc {
 		delete(m.procs, name)
 	}
-	proc.Stop()
+	proc.Stop(reason, lastError)
+	m.recordStoppedLocked(name, proc.Snapshot())
+}
+
+func (m *Manager) recordStartErrorLocked(name string, err error) {
+	state := m.states[name]
+	if state.Status == "" {
+		state.Status = StatusStopped
+	}
+	state.LastStopped = time.Now()
+	state.StopReason = StopReasonCrashed
+	state.LastError = err.Error()
+	state.Status = StatusCrashed
+	m.states[name] = state
+}
+
+func (m *Manager) recordStoppedLocked(name string, state State) {
+	m.states[name] = state
 }
 
 type Process struct {
@@ -100,6 +181,10 @@ type Process struct {
 	nextID      uint64
 	inFlight    bool
 	stopped     bool
+	lastStarted time.Time
+	lastStopped time.Time
+	stopReason  StopReason
+	lastError   string
 }
 
 func Start(ctx context.Context, srv config.Server, stderr io.Writer) (*Process, error) {
@@ -122,6 +207,7 @@ func Start(ctx context.Context, srv config.Server, stderr io.Writer) (*Process, 
 		done:        make(chan struct{}),
 		idleTimeout: time.Duration(srv.IdleTimeout),
 		reqTimeout:  time.Duration(srv.RequestTimeout),
+		lastStarted: time.Now(),
 	}
 	p.resetIdleTimer()
 	return p, nil
@@ -179,7 +265,7 @@ func (p *Process) request(ctx context.Context, method string, params json.RawMes
 		}()
 		select {
 		case <-ctx.Done():
-			p.Stop()
+			p.Stop(StopReasonRequestTimeout, ctx.Err().Error())
 			<-result
 			return mcp.Message{}, ctx.Err()
 		case got := <-result:
@@ -228,23 +314,64 @@ func (p *Process) Running() bool {
 	}
 }
 
-func (p *Process) Wait() {
-	_ = p.cmd.Wait()
+func (p *Process) Wait() error {
+	err := p.cmd.Wait()
 	close(p.done)
+	return err
 }
 
-func (p *Process) Stop() {
+func (p *Process) Stop(reason StopReason, lastError string) {
 	p.stateMu.Lock()
 	if p.stopped {
 		p.stateMu.Unlock()
 		return
 	}
-	p.stopped = true
-	p.stopIdleTimerLocked()
+	p.markStoppedLocked(reason, lastError)
 	p.stateMu.Unlock()
 	if p.cmd.Process != nil {
 		_ = p.cmd.Process.Kill()
 	}
+}
+
+func (p *Process) MarkStopped(reason StopReason, lastError string) {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+	p.markStoppedLocked(reason, lastError)
+}
+
+func (p *Process) Snapshot() State {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+
+	state := State{
+		Status:      StatusRunning,
+		LastStarted: p.lastStarted,
+		LastStopped: p.lastStopped,
+		StopReason:  p.stopReason,
+		LastError:   p.lastError,
+	}
+	if p.stopped {
+		switch p.stopReason {
+		case StopReasonIdleTimeout:
+			state.Status = StatusIdleStopped
+		case StopReasonCrashed, StopReasonRequestTimeout:
+			state.Status = StatusCrashed
+		default:
+			state.Status = StatusStopped
+		}
+	}
+	return state
+}
+
+func (p *Process) markStoppedLocked(reason StopReason, lastError string) {
+	if p.stopped {
+		return
+	}
+	p.stopped = true
+	p.lastStopped = time.Now()
+	p.stopReason = reason
+	p.lastError = lastError
+	p.stopIdleTimerLocked()
 }
 
 func (p *Process) beginRequest() {
@@ -293,7 +420,7 @@ func (p *Process) stopIfIdle() {
 		p.stateMu.Unlock()
 		return
 	}
-	p.stopped = true
+	p.markStoppedLocked(StopReasonIdleTimeout, "")
 	p.stateMu.Unlock()
 	if p.cmd.Process != nil {
 		_ = p.cmd.Process.Kill()
