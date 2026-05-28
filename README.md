@@ -5,6 +5,13 @@
 ## Install
 
 ```bash
+brew tap s4na/lazymcp https://github.com/s4na/lazymcp
+brew install lazymcp
+```
+
+Or install with Go:
+
+```bash
 go install github.com/s4na/lazymcp/cmd/lazymcp@latest
 ```
 
