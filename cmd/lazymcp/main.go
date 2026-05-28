@@ -1,12 +1,9 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"os"
-	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -122,12 +119,28 @@ func newMigrateCommand(configPath *string) *cobra.Command {
 	var opts migrate.Options
 	var dryRun bool
 	var yes bool
+	runCodexMigration := func(cmd *cobra.Command) error {
+		if yes {
+			opts.Write = true
+		}
+		if dryRun && opts.Write {
+			return fmt.Errorf("--dry-run and --write cannot be used together")
+		}
+		opts.Source = migrate.SourceCodex
+		opts.ConfigPath = *configPath
+		opts.UpdateClient = opts.UpdateClient || opts.Write
+		plan, err := migrate.Run(opts)
+		if plan != nil {
+			fmt.Fprint(cmd.OutOrStdout(), migrate.FormatPlan(plan))
+		}
+		return err
+	}
 	cmd := &cobra.Command{
 		Use:   "migrate",
 		Short: "Migrate existing client MCP settings into lazymcp config",
+		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_ = cmd.Help()
-			return fmt.Errorf("migrate requires a source subcommand")
+			return runCodexMigration(cmd)
 		},
 	}
 	cmd.PersistentFlags().BoolVar(&opts.Write, "write", false, "write merged lazymcp config")
@@ -135,58 +148,19 @@ func newMigrateCommand(configPath *string) *cobra.Command {
 	cmd.PersistentFlags().StringVar(&opts.SourcePath, "source-path", "", "source client config path")
 	cmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "preview the migration without writing files (default unless --write is set)")
 	cmd.PersistentFlags().BoolVar(&opts.UpdateClient, "register-client", false, "replace the source client MCP settings with the lazymcp proxy after importing")
-	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "write files and answer yes to registering lazymcp in the source client")
+	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "write lazymcp config and update the source client MCP settings")
+	_ = cmd.PersistentFlags().MarkHidden("register-client")
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "codex",
-		Short: "Migrate Codex MCP settings",
-		Args:  cobra.NoArgs,
+		Use:    "codex",
+		Short:  "Migrate Codex MCP settings",
+		Args:   cobra.NoArgs,
+		Hidden: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if yes {
-				opts.Write = true
-				opts.UpdateClient = true
-			}
-			if dryRun && opts.Write {
-				return fmt.Errorf("--dry-run and --write cannot be used together")
-			}
-			opts.Source = migrate.SourceCodex
-			opts.ConfigPath = *configPath
-			if opts.Write && !opts.UpdateClient && promptRegisterClient(cmd.InOrStdin(), cmd.OutOrStdout()) {
-				opts.UpdateClient = true
-			}
-			plan, err := migrate.Run(opts)
-			if plan != nil {
-				fmt.Fprint(cmd.OutOrStdout(), migrate.FormatPlan(plan))
-			}
-			return err
+			return runCodexMigration(cmd)
 		},
 	})
 	return cmd
-}
-
-func promptRegisterClient(in io.Reader, out io.Writer) bool {
-	if !shouldPrompt(in) {
-		return false
-	}
-	fmt.Fprint(out, "Register lazymcp as the only MCP server in the source client? [y/N] ")
-	answer, err := bufio.NewReader(in).ReadString('\n')
-	if err != nil && len(answer) == 0 {
-		return false
-	}
-	answer = strings.TrimSpace(strings.ToLower(answer))
-	return answer == "y" || answer == "yes"
-}
-
-func shouldPrompt(in io.Reader) bool {
-	file, ok := in.(*os.File)
-	if !ok {
-		return true
-	}
-	info, err := file.Stat()
-	if err != nil {
-		return false
-	}
-	return info.Mode()&os.ModeCharDevice != 0
 }
 
 func formatTime(t time.Time) string {

@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestMigrateCommandOnlySupportsCodex(t *testing.T) {
+func TestMigrateCommandHidesSourceSelection(t *testing.T) {
 	cmd := newRootCommand()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -19,11 +19,8 @@ func TestMigrateCommandOnlySupportsCodex(t *testing.T) {
 		t.Fatalf("execute help: %v", err)
 	}
 	help := out.String()
-	if !strings.Contains(help, "codex") {
-		t.Fatalf("help does not include codex subcommand:\n%s", help)
-	}
-	if strings.Contains(help, "claude") {
-		t.Fatalf("help still mentions claude:\n%s", help)
+	if strings.Contains(help, "codex") || strings.Contains(help, "claude") {
+		t.Fatalf("help still mentions source selection:\n%s", help)
 	}
 }
 
@@ -88,9 +85,20 @@ args = ["-y", "github"]
 	if !strings.Contains(string(data), "github:") {
 		t.Fatalf("target config missing github server:\n%s", string(data))
 	}
+	codexConfig, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	got := string(codexConfig)
+	if strings.Contains(got, "[mcp_servers.github]") {
+		t.Fatalf("source config kept direct server:\n%s", got)
+	}
+	if !strings.Contains(got, "[mcp_servers.lazymcp]") {
+		t.Fatalf("source config missing lazymcp:\n%s", got)
+	}
 }
 
-func TestMigrateCodexYesCreatesConfigAndRegistersProxy(t *testing.T) {
+func TestMigrateYesDefaultsToCodexAndRegistersProxy(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")
 	target := filepath.Join(dir, "lazymcp.yaml")
@@ -109,7 +117,7 @@ args = ["-y", "github"]
 	cmd.SetErr(&out)
 	cmd.SetArgs([]string{
 		"--config", target,
-		"migrate", "--source-path", source, "-y", "codex",
+		"migrate", "--source-path", source, "-y",
 	})
 
 	if err := cmd.Execute(); err != nil {
@@ -131,7 +139,7 @@ args = ["-y", "github"]
 	}
 }
 
-func TestMigrateCodexPromptCanRegisterProxy(t *testing.T) {
+func TestMigrateCodexWriteRegistersProxyWithoutPrompt(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")
 	target := filepath.Join(dir, "lazymcp.yaml")
@@ -145,7 +153,7 @@ command = "npx"
 
 	cmd := newRootCommand()
 	var out bytes.Buffer
-	cmd.SetIn(strings.NewReader("yes\n"))
+	cmd.SetIn(strings.NewReader("no\n"))
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetArgs([]string{
@@ -156,8 +164,8 @@ command = "npx"
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if !strings.Contains(out.String(), "Register lazymcp as the only MCP server") {
-		t.Fatalf("output did not prompt:\n%s", out.String())
+	if strings.Contains(out.String(), "Register lazymcp as the only MCP server") {
+		t.Fatalf("output unexpectedly prompted:\n%s", out.String())
 	}
 	codexConfig, err := os.ReadFile(source)
 	if err != nil {
@@ -181,18 +189,31 @@ func TestMigrateCodexRejectsUnexpectedArgs(t *testing.T) {
 	}
 }
 
-func TestMigrateWithoutSubcommandReturnsError(t *testing.T) {
+func TestMigrateWithoutSubcommandDefaultsToCodex(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
 	cmd := newRootCommand()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"migrate", "--write"})
+	cmd.SetArgs([]string{
+		"--config", target,
+		"migrate", "--source-path", source, "--dry-run",
+	})
 
-	err := cmd.Execute()
-	if err == nil {
-		t.Fatalf("expected migrate without subcommand to fail")
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
 	}
-	if !strings.Contains(out.String(), "Migrate existing client MCP settings") {
-		t.Fatalf("help was not printed:\n%s", out.String())
+	if !strings.Contains(out.String(), "source: codex") {
+		t.Fatalf("output did not default to codex:\n%s", out.String())
 	}
 }

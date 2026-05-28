@@ -18,30 +18,25 @@ go install github.com/s4na/lazymcp/cmd/lazymcp@latest
 ## 使い方
 
 Codex にすでに設定されている MCP サーバーをインポートします。
-対話可能な端末で `--write` を指定すると、インポート後に `lazymcp` だけを Codex の MCP サーバーとして登録するか確認します。
+`--write` を指定すると、インポート後に `lazymcp` だけを Codex の MCP サーバーとして登録します。
 
 ```bash
-lazymcp migrate codex --write
+lazymcp migrate --write
 ```
 
-既存の Codex MCP サーバーをインポートした後、`lazymcp` は Codex の直接的な MCP サーバー登録を単一の `lazymcp` プロキシエントリに置き換えるか確認します。
-Codex CLI と Codex app の両方で MCP に `lazymcp` だけを使うには、`yes` と答えてください。
+既存の Codex MCP サーバーをインポートした後、Codex の直接的な MCP サーバー登録は単一の `lazymcp` プロキシエントリに置き換えられます。
+
+`-y` を使うと、`--write` と同じように lazymcp 設定を書き込み、Codex 登録も行います。
 
 ```bash
-Register lazymcp as the only MCP server in the source client? [y/N] yes
-```
-
-非対話でセットアップする場合は `-y` を使うと、確認なしで lazymcp 設定を書き込み、Codex 登録も自動承認します。
-
-```bash
-lazymcp migrate codex -y
+lazymcp migrate -y
 ```
 
 バックエンドのツールは、`github.search_repositories` のように名前空間のプレフィックス付きで公開されます。
 設定に `tools:` が書かれているバックエンドプロセスは、対応する最初の `tools/call` で起動し、アイドルタイムアウト後に停止します。
 Codex から移行した直後のように `tools:` が空のバックエンドは、クライアントからの最初の `tools/list` で起動してツール一覧を検出し、そのセッション内でキャッシュします。
 
-`lazymcp migrate codex` は Codex の `~/.codex/config.toml` を読み取り、直接登録されている各 `[mcp_servers.<name>]` エントリを `~/.config/lazymcp/config.yaml` に移します。
+`lazymcp migrate` は Codex の `~/.codex/config.toml` を読み取り、直接登録されている各 `[mcp_servers.<name>]` エントリを `~/.config/lazymcp/config.yaml` に移します。
 既存ファイルを置き換える前には、タイムスタンプ付きのバックアップを作成します。
 変換後の Codex MCP 設定には次のエントリだけが残ります。
 
@@ -164,7 +159,7 @@ lazymcp inspect --config config.yaml
 Codex にすでに設定されている MCP サーバーをプレビューします。
 
 ```bash
-lazymcp migrate codex --dry-run
+lazymcp migrate --dry-run
 ```
 
 `--write` を指定しない限り、プレビューがデフォルトです。意図を明示するために `--dry-run` も指定できます。
@@ -172,15 +167,14 @@ lazymcp migrate codex --dry-run
 インポートしたサーバーを lazymcp の設定に書き込みます。
 
 ```bash
-lazymcp migrate codex --write --config ~/.config/lazymcp/config.yaml
+lazymcp migrate --write --config ~/.config/lazymcp/config.yaml
 ```
 
-`--write` を指定すると、対話可能な端末では Codex の直接的な MCP サーバーエントリを単一の `lazymcp` プロキシエントリに置き換えるか確認します。
-明示的に置き換える場合は `--register-client` を使ってください。
-`-y` を使うと、lazymcp 設定を書き込み、確認なしで登録も自動承認します。
+`--write` を指定すると、Codex の直接的な MCP サーバーエントリを単一の `lazymcp` プロキシエントリに置き換えます。
+`-y` を使うと、`--write` と同じように lazymcp 設定を書き込み、Codex 登録も行います。
 
 ```bash
-lazymcp migrate codex -y
+lazymcp migrate -y
 ```
 
 `--write` はサーバーエントリを安全にマージし、既存の lazymcp 設定を置き換える前にタイムスタンプ付きのバックアップを作成します。
