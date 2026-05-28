@@ -541,6 +541,83 @@ args = ["-y", "filesystem", "/tmp"]
 	}
 }
 
+func TestRunWriteRegistersProxyAndRemovesImportedCodexServersWhenTargetAlreadyHasSome(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[projects."/tmp/repo"]
+trust_level = "trusted"
+
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github"]
+
+[mcp_servers.filesystem]
+command = "npx"
+args = ["-y", "filesystem", "/tmp"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	err = os.WriteFile(target, []byte(`
+servers:
+  github:
+    command: npx
+    args:
+      - -y
+      - github
+    namespace: github
+    idle_timeout: 5m0s
+    request_timeout: 10m0s
+    tools:
+      - name: search
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   target,
+		SourcePath:   source,
+		Write:        true,
+		UpdateClient: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(plan.ChangedFiles) != 2 {
+		t.Fatalf("changed files = %#v, want target and source", plan.ChangedFiles)
+	}
+
+	cfg, err := readLazyConfig(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if len(cfg.Servers["github"].Tools) != 1 {
+		t.Fatalf("existing github tools were not preserved: %#v", cfg.Servers["github"].Tools)
+	}
+	if _, ok := cfg.Servers["filesystem"]; !ok {
+		t.Fatalf("target config missing newly imported filesystem server: %#v", cfg.Servers)
+	}
+
+	codexConfig, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	got := string(codexConfig)
+	if strings.Contains(got, "[mcp_servers.github]") || strings.Contains(got, "[mcp_servers.filesystem]") {
+		t.Fatalf("codex config kept migrated direct MCP servers:\n%s", got)
+	}
+	if !strings.Contains(got, "[mcp_servers.lazymcp]") {
+		t.Fatalf("codex config missing lazymcp proxy:\n%s", got)
+	}
+	if !strings.Contains(got, `[projects.'/tmp/repo']`) && !strings.Contains(got, `[projects."/tmp/repo"]`) {
+		t.Fatalf("codex config did not preserve non-MCP settings:\n%s", got)
+	}
+}
+
 func TestRunUpdateClientRequiresWrite(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")
