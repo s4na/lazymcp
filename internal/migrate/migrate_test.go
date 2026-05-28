@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestRunCodexDryRunMasksEnvSecrets(t *testing.T) {
@@ -365,6 +366,13 @@ func TestRunWriteCreatesDistinctBackups(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")
 	target := filepath.Join(dir, "lazymcp.yaml")
+	originalNowUTC := nowUTC
+	nowUTC = func() time.Time {
+		return time.Date(2026, 5, 28, 12, 34, 56, 123, time.UTC)
+	}
+	defer func() {
+		nowUTC = originalNowUTC
+	}()
 	err := os.WriteFile(source, []byte(`
 [mcp_servers.github]
 command = "npx"
@@ -403,6 +411,9 @@ servers:
 	}
 	if first.Backups[0] == second.Backups[0] {
 		t.Fatalf("backup path reused: %s", first.Backups[0])
+	}
+	if !strings.HasSuffix(second.Backups[0], ".1") {
+		t.Fatalf("second backup path = %s, want collision suffix", second.Backups[0])
 	}
 }
 

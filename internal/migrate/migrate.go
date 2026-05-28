@@ -50,6 +50,10 @@ type clientServer struct {
 	Env     map[string]string
 }
 
+var nowUTC = func() time.Time {
+	return time.Now().UTC()
+}
+
 func Run(opts Options) (*Plan, error) {
 	if opts.ConfigPath == "" {
 		opts.ConfigPath = config.DefaultPath()
@@ -373,15 +377,25 @@ func stringMap(value any) (map[string]string, error) {
 }
 
 func backupFile(path string) (string, error) {
-	backup := fmt.Sprintf("%s.bak.%s", path, time.Now().UTC().Format("20060102T150405.000000000Z"))
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
-	if err := writeNewFile(backup, data); err != nil {
-		return "", err
+	stamp := nowUTC().Format("20060102T150405.000000000Z")
+	for attempt := 0; attempt < 100; attempt++ {
+		backup := fmt.Sprintf("%s.bak.%s", path, stamp)
+		if attempt > 0 {
+			backup = fmt.Sprintf("%s.%d", backup, attempt)
+		}
+		if err := writeNewFile(backup, data); err != nil {
+			if errors.Is(err, os.ErrExist) {
+				continue
+			}
+			return "", err
+		}
+		return backup, nil
 	}
-	return backup, nil
+	return "", fmt.Errorf("create backup for %s: too many name collisions", path)
 }
 
 func writeNewFile(path string, data []byte) error {
