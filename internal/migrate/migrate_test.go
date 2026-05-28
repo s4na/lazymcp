@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/s4na/lazymcp/internal/config"
 )
 
 func TestRunCodexDryRunMasksEnvSecrets(t *testing.T) {
@@ -166,6 +168,28 @@ GITHUB_TOKEN = 1
 	}
 }
 
+func TestRunCodexRejectsMalformedSourceConfig(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+args = [
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	_, err = Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: filepath.Join(dir, "lazymcp.yaml"),
+		SourcePath: source,
+	})
+	if err == nil || !strings.Contains(err.Error(), "parse "+source) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestRunCodexSkipsExistingLazyMCPProxy(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")
@@ -288,6 +312,45 @@ servers:
 	got := string(data)
 	if !strings.Contains(got, "github:") || !strings.Contains(got, "filesystem:") {
 		t.Fatalf("merged config missing servers:\n%s", got)
+	}
+}
+
+func TestRunWriteRejectsInvalidExistingLazyConfig(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	err = os.WriteFile(target, []byte(`
+servers:
+  filesystem:
+    args:
+      - -y
+      - filesystem
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: target,
+		SourcePath: source,
+		Write:      true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "validate "+target) || !strings.Contains(err.Error(), `server "filesystem" command is required`) {
+		t.Fatalf("error = %v", err)
+	}
+	if plan == nil {
+		t.Fatalf("plan is nil")
+	}
+	if len(plan.ChangedFiles) != 0 || len(plan.Backups) != 0 {
+		t.Fatalf("plan changed files/backups = %#v/%#v", plan.ChangedFiles, plan.Backups)
 	}
 }
 
@@ -538,6 +601,12 @@ args = ["-y", "filesystem", "/tmp"]
 	}
 	if !strings.Contains(got, `[projects.'/tmp/repo']`) && !strings.Contains(got, `[projects."/tmp/repo"]`) {
 		t.Fatalf("codex config did not preserve non-MCP settings:\n%s", got)
+	}
+	if _, err := config.Load(target); err != nil {
+		t.Fatalf("written lazymcp config failed validation: %v", err)
+	}
+	if _, err := readCodexConfig(source); err != nil {
+		t.Fatalf("written codex config failed validation: %v", err)
 	}
 }
 
