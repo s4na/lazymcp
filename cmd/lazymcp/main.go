@@ -42,6 +42,8 @@ func newRootCommand() *cobra.Command {
 				}
 				target = found
 			}
+			target.InitDefaultHelpFlag()
+			target.InitDefaultVersionFlag()
 			return target.Help()
 		},
 	})
@@ -76,7 +78,7 @@ func newRootCommand() *cobra.Command {
 
 	root.AddCommand(&cobra.Command{
 		Use:   "inspect",
-		Short: "Show configured backend servers",
+		Short: "Show configured backend servers and lifecycle state",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load(configPath)
 			if err != nil {
