@@ -22,7 +22,10 @@ func TestMigrateCommandHidesSourceSelection(t *testing.T) {
 	if strings.Contains(help, "codex") || strings.Contains(help, "claude") {
 		t.Fatalf("help still mentions source selection:\n%s", help)
 	}
-	if !strings.Contains(help, "write lazymcp config and update the source client MCP settings") {
+	if !strings.Contains(help, "Migrate Codex MCP settings into lazymcp config") {
+		t.Fatalf("help does not describe Codex migration:\n%s", help)
+	}
+	if !strings.Contains(help, "write lazymcp config and update Codex MCP settings") {
 		t.Fatalf("help does not describe write registration behavior:\n%s", help)
 	}
 	if strings.Contains(help, "register-client") {

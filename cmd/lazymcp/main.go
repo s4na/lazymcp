@@ -137,18 +137,18 @@ func newMigrateCommand(configPath *string) *cobra.Command {
 	}
 	cmd := &cobra.Command{
 		Use:   "migrate",
-		Short: "Migrate existing client MCP settings into lazymcp config",
+		Short: "Migrate Codex MCP settings into lazymcp config",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runCodexMigration(cmd)
 		},
 	}
-	cmd.PersistentFlags().BoolVar(&opts.Write, "write", false, "write lazymcp config and update the source client MCP settings")
+	cmd.PersistentFlags().BoolVar(&opts.Write, "write", false, "write lazymcp config and update Codex MCP settings")
 	cmd.PersistentFlags().BoolVar(&opts.Overwrite, "overwrite", false, "overwrite existing lazymcp server entries")
 	cmd.PersistentFlags().StringVar(&opts.SourcePath, "source-path", "", "source client config path")
 	cmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "preview the migration without writing files (default unless --write is set)")
 	cmd.PersistentFlags().BoolVar(&opts.UpdateClient, "register-client", false, "replace the source client MCP settings with the lazymcp proxy after importing")
-	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "write lazymcp config and update the source client MCP settings")
+	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "write lazymcp config and update Codex MCP settings")
 	_ = cmd.PersistentFlags().MarkHidden("register-client")
 
 	cmd.AddCommand(&cobra.Command{
