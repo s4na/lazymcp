@@ -31,9 +31,49 @@ servers:
 	if got := time.Duration(cfg.Servers["github"].IdleTimeout); got != 5*time.Minute {
 		t.Fatalf("idle timeout = %s", got)
 	}
+	if got := time.Duration(cfg.Servers["github"].RequestTimeout); got != 10*time.Minute {
+		t.Fatalf("request timeout = %s", got)
+	}
 	tools := cfg.Tools()
 	if len(tools) != 1 || tools[0].Name != "gh.search" {
 		t.Fatalf("unexpected tools: %#v", tools)
+	}
+}
+
+func TestLoadRejectsDuplicateNamespace(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+servers:
+  one:
+    command: first
+    namespace: shared
+  two:
+    command: second
+    namespace: shared
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatalf("expected duplicate namespace error")
+	}
+}
+
+func TestLoadRejectsDuplicateExposedToolName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+servers:
+  github:
+    command: npx
+    tools:
+      - name: search
+      - name: github.search
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if _, err := Load(path); err == nil {
+		t.Fatalf("expected duplicate exposed tool name error")
 	}
 }
 

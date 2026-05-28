@@ -15,11 +15,12 @@ type Config struct {
 }
 
 type Server struct {
-	Command     string   `yaml:"command"`
-	Args        []string `yaml:"args"`
-	Namespace   string   `yaml:"namespace"`
-	IdleTimeout Duration `yaml:"idle_timeout"`
-	Tools       []Tool   `yaml:"tools"`
+	Command        string   `yaml:"command"`
+	Args           []string `yaml:"args"`
+	Namespace      string   `yaml:"namespace"`
+	IdleTimeout    Duration `yaml:"idle_timeout"`
+	RequestTimeout Duration `yaml:"request_timeout"`
+	Tools          []Tool   `yaml:"tools"`
 }
 
 type Tool struct {
@@ -53,12 +54,29 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("config must define at least one server")
 	}
 
+	namespaces := map[string]string{}
+	toolNames := map[string]string{}
 	for name, srv := range cfg.Servers {
 		if srv.Command == "" {
 			return nil, fmt.Errorf("server %q command is required", name)
 		}
+		namespace := srv.NamespaceOrName(name)
+		if existing := namespaces[namespace]; existing != "" {
+			return nil, fmt.Errorf("namespace %q is used by both %q and %q", namespace, existing, name)
+		}
+		namespaces[namespace] = name
 		if srv.IdleTimeout == 0 {
 			srv.IdleTimeout = Duration(5 * time.Minute)
+		}
+		if srv.RequestTimeout == 0 {
+			srv.RequestTimeout = Duration(10 * time.Minute)
+		}
+		for _, tool := range srv.Tools {
+			exposedName := namespace + "." + strings.TrimPrefix(tool.Name, namespace+".")
+			if existing := toolNames[exposedName]; existing != "" {
+				return nil, fmt.Errorf("tool %q is exposed by both %q and %q", exposedName, existing, name)
+			}
+			toolNames[exposedName] = name
 		}
 		cfg.Servers[name] = srv
 	}

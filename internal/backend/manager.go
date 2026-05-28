@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"strconv"
 	"sync"
 	"time"
 
@@ -75,7 +76,9 @@ type Process struct {
 	mu          sync.Mutex
 	done        chan struct{}
 	idleTimeout time.Duration
+	reqTimeout  time.Duration
 	idleTimer   *time.Timer
+	nextID      uint64
 }
 
 func Start(ctx context.Context, srv config.Server, stderr io.Writer) (*Process, error) {
@@ -97,6 +100,7 @@ func Start(ctx context.Context, srv config.Server, stderr io.Writer) (*Process, 
 		codec:       mcp.NewCodec(stdout, stdin),
 		done:        make(chan struct{}),
 		idleTimeout: time.Duration(srv.IdleTimeout),
+		reqTimeout:  time.Duration(srv.RequestTimeout),
 	}
 	p.resetIdleTimer()
 	return p, nil
@@ -136,23 +140,55 @@ func (p *Process) request(ctx context.Context, method string, params json.RawMes
 	defer p.mu.Unlock()
 	p.stopIdleTimer()
 	defer p.resetIdleTimer()
-	id := time.Now().UnixNano()
+	if p.reqTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, p.reqTimeout)
+		defer cancel()
+	}
+	p.nextID++
+	id := strconv.FormatUint(p.nextID, 10)
 	if err := p.codec.Write(mcp.NewRequest(id, method, params)); err != nil {
 		return mcp.Message{}, err
 	}
 	for {
+		result := make(chan readResult, 1)
+		go func() {
+			msg, err := p.codec.Read()
+			result <- readResult{msg: msg, err: err}
+		}()
 		select {
 		case <-ctx.Done():
+			p.Stop()
+			<-result
 			return mcp.Message{}, ctx.Err()
-		default:
+		case got := <-result:
+			if got.err != nil {
+				return mcp.Message{}, got.err
+			}
+			if idsEqual(got.msg.ID, id) {
+				return got.msg, nil
+			}
 		}
-		msg, err := p.codec.Read()
-		if err != nil {
-			return mcp.Message{}, err
-		}
-		if idsEqual(msg.ID, id) {
-			return msg, nil
-		}
+	}
+}
+
+type readResult struct {
+	msg mcp.Message
+	err error
+}
+
+func idsEqual(got any, want string) bool {
+	switch v := got.(type) {
+	case string:
+		return v == want
+	case float64:
+		return strconv.FormatInt(int64(v), 10) == want
+	case int64:
+		return strconv.FormatInt(v, 10) == want
+	case int:
+		return strconv.Itoa(v) == want
+	default:
+		return fmt.Sprint(v) == want
 	}
 }
 
@@ -193,18 +229,5 @@ func (p *Process) resetIdleTimer() {
 func (p *Process) stopIdleTimer() {
 	if p.idleTimer != nil {
 		p.idleTimer.Stop()
-	}
-}
-
-func idsEqual(got any, want int64) bool {
-	switch v := got.(type) {
-	case float64:
-		return int64(v) == want
-	case int64:
-		return v == want
-	case int:
-		return int64(v) == want
-	default:
-		return fmt.Sprint(v) == fmt.Sprint(want)
 	}
 }

@@ -21,6 +21,7 @@ servers:
       - "@modelcontextprotocol/server-github"
     namespace: github
     idle_timeout: 300s
+    request_timeout: 10m
     tools:
       - name: search_repositories
         description: Search GitHub repositories.
