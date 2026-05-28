@@ -26,6 +26,7 @@ type Options struct {
 	ConfigPath   string
 	SourcePath   string
 	Write        bool
+	Diff         bool
 	Overwrite    bool
 	UpdateClient bool
 }
@@ -39,6 +40,12 @@ type Plan struct {
 	Skipped      []string
 	ChangedFiles []string
 	Backups      []string
+	Diffs        []FileDiff
+}
+
+type FileDiff struct {
+	Path string
+	Diff string
 }
 
 type clientConfig struct {
@@ -80,6 +87,24 @@ func Run(opts Options) (*Plan, error) {
 	plan.Conflicts = conflicts
 	if len(conflicts) > 0 {
 		return plan, fmt.Errorf("migration has conflicts: %s", strings.Join(conflicts, "; "))
+	}
+	if opts.Diff {
+		diffs, err := diffConfig(opts.ConfigPath, servers, opts.Overwrite)
+		if err != nil {
+			return plan, err
+		}
+		plan.Diffs = append(plan.Diffs, diffs...)
+		if opts.UpdateClient {
+			if len(sourceFiles) == 0 {
+				return plan, fmt.Errorf("no source client config path discovered")
+			}
+			diffs, err := diffClientProxy(opts.Source, sourceFiles[0], opts.ConfigPath)
+			if err != nil {
+				return plan, err
+			}
+			plan.Diffs = append(plan.Diffs, diffs...)
+		}
+		return plan, nil
 	}
 	if opts.Write {
 		changed, backups, err := writeConfig(opts.ConfigPath, servers, opts.Overwrite)
@@ -130,17 +155,53 @@ func writeClientProxy(source Source, sourcePath, configPath string) ([]string, [
 	}
 }
 
+func diffClientProxy(source Source, sourcePath, configPath string) ([]FileDiff, error) {
+	switch source {
+	case SourceCodex:
+		before, after, changed, err := codexProxyData(sourcePath, configPath)
+		if err != nil {
+			return nil, err
+		}
+		if !changed {
+			return nil, nil
+		}
+		return []FileDiff{{Path: sourcePath, Diff: UnifiedDiff(sourcePath, sourcePath, before, after)}}, nil
+	default:
+		return nil, fmt.Errorf("unsupported source %q", source)
+	}
+}
+
 func writeCodexProxy(sourcePath, configPath string) ([]string, []string, error) {
-	data, err := os.ReadFile(sourcePath)
+	_, after, changed, err := codexProxyData(sourcePath, configPath)
 	if err != nil {
 		return nil, nil, err
 	}
+	if !changed {
+		return nil, nil, nil
+	}
+	var backups []string
+	backup, err := backupFile(sourcePath)
+	if err != nil {
+		return nil, nil, err
+	}
+	backups = append(backups, backup)
+	if err := writeConfigFile(sourcePath, after); err != nil {
+		return nil, nil, err
+	}
+	return []string{sourcePath}, backups, nil
+}
+
+func codexProxyData(sourcePath, configPath string) ([]byte, []byte, bool, error) {
+	before, err := os.ReadFile(sourcePath)
+	if err != nil {
+		return nil, nil, false, err
+	}
 	var raw map[string]any
-	if err := toml.Unmarshal(data, &raw); err != nil {
-		return nil, nil, fmt.Errorf("parse %s: %w", sourcePath, err)
+	if err := toml.Unmarshal(before, &raw); err != nil {
+		return nil, nil, false, fmt.Errorf("parse %s: %w", sourcePath, err)
 	}
 	if codexAlreadyUsesLazyProxy(raw, configPath) {
-		return nil, nil, nil
+		return before, before, false, nil
 	}
 	raw["mcp_servers"] = map[string]any{
 		"lazymcp": map[string]any{
@@ -150,18 +211,9 @@ func writeCodexProxy(sourcePath, configPath string) ([]string, []string, error) 
 	}
 	encoded, err := toml.Marshal(raw)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
-	var backups []string
-	backup, err := backupFile(sourcePath)
-	if err != nil {
-		return nil, nil, err
-	}
-	backups = append(backups, backup)
-	if err := writeConfigFile(sourcePath, encoded); err != nil {
-		return nil, nil, err
-	}
-	return []string{sourcePath}, backups, nil
+	return before, encoded, string(before) != string(encoded), nil
 }
 
 func codexAlreadyUsesLazyProxy(raw map[string]any, configPath string) bool {
@@ -279,35 +331,12 @@ func mergeConflicts(path string, incoming map[string]config.Server, overwrite bo
 }
 
 func writeConfig(path string, incoming map[string]config.Server, overwrite bool) ([]string, []string, error) {
-	cfg, err := readLazyConfig(path)
+	_, after, changed, err := configData(path, incoming, overwrite)
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return nil, nil, err
-		}
-		cfg = &config.Config{Servers: map[string]config.Server{}}
-	}
-	changed := removeLazyConfigServers(cfg, path)
-	if len(incoming) == 0 && len(cfg.Servers) == 0 {
-		return nil, nil, nil
-	}
-	for name, srv := range incoming {
-		existing, exists := cfg.Servers[name]
-		if exists && !overwrite && sameImportedServer(name, existing, srv) {
-			continue
-		}
-		if exists && !overwrite {
-			return nil, nil, fmt.Errorf("server %q already exists", name)
-		}
-		cfg.Servers[name] = srv
-		changed = true
+		return nil, nil, err
 	}
 	if !changed {
 		return nil, nil, nil
-	}
-	applyDefaults(cfg)
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		return nil, nil, err
 	}
 	var backups []string
 	if _, err := os.Stat(path); err == nil {
@@ -322,10 +351,59 @@ func writeConfig(path string, incoming map[string]config.Server, overwrite bool)
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, nil, err
 	}
-	if err := writeConfigFile(path, data); err != nil {
+	if err := writeConfigFile(path, after); err != nil {
 		return nil, nil, err
 	}
 	return []string{path}, backups, nil
+}
+
+func diffConfig(path string, incoming map[string]config.Server, overwrite bool) ([]FileDiff, error) {
+	before, after, changed, err := configData(path, incoming, overwrite)
+	if err != nil {
+		return nil, err
+	}
+	if !changed {
+		return nil, nil
+	}
+	return []FileDiff{{Path: path, Diff: UnifiedDiff(path, path, before, after)}}, nil
+}
+
+func configData(path string, incoming map[string]config.Server, overwrite bool) ([]byte, []byte, bool, error) {
+	before, readErr := os.ReadFile(path)
+	if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+		return nil, nil, false, readErr
+	}
+	cfg, err := readLazyConfig(path)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, nil, false, err
+		}
+		cfg = &config.Config{Servers: map[string]config.Server{}}
+	}
+	changed := removeLazyConfigServers(cfg, path)
+	if len(incoming) == 0 && len(cfg.Servers) == 0 {
+		return before, before, false, nil
+	}
+	for name, srv := range incoming {
+		existing, exists := cfg.Servers[name]
+		if exists && !overwrite && sameImportedServer(name, existing, srv) {
+			continue
+		}
+		if exists && !overwrite {
+			return nil, nil, false, fmt.Errorf("server %q already exists", name)
+		}
+		cfg.Servers[name] = srv
+		changed = true
+	}
+	if !changed {
+		return before, before, false, nil
+	}
+	applyDefaults(cfg)
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	return before, data, true, nil
 }
 
 func applyDefaults(cfg *config.Config) {
@@ -454,7 +532,80 @@ func FormatPlan(plan *Plan) string {
 			fmt.Fprintf(&b, "  - %s\n", path)
 		}
 	}
+	if len(plan.Diffs) > 0 {
+		fmt.Fprintf(&b, "diffs:\n")
+		for _, diff := range plan.Diffs {
+			fmt.Fprintf(&b, "%s", diff.Diff)
+		}
+	}
 	return b.String()
+}
+
+func UnifiedDiff(oldName, newName string, oldData, newData []byte) string {
+	oldLines := splitDiffLines(string(oldData))
+	newLines := splitDiffLines(string(newData))
+	ops := diffLines(oldLines, newLines)
+	var b strings.Builder
+	fmt.Fprintf(&b, "--- %s\n", oldName)
+	fmt.Fprintf(&b, "+++ %s\n", newName)
+	fmt.Fprintf(&b, "@@ -1,%d +1,%d @@\n", len(oldLines), len(newLines))
+	for _, op := range ops {
+		fmt.Fprintf(&b, "%c%s", op.kind, op.line)
+		if !strings.HasSuffix(op.line, "\n") {
+			fmt.Fprintf(&b, "\n")
+		}
+	}
+	return b.String()
+}
+
+type diffOp struct {
+	kind rune
+	line string
+}
+
+func splitDiffLines(value string) []string {
+	if value == "" {
+		return nil
+	}
+	lines := strings.SplitAfter(value, "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return lines
+}
+
+func diffLines(oldLines, newLines []string) []diffOp {
+	lcs := make([][]int, len(oldLines)+1)
+	for i := range lcs {
+		lcs[i] = make([]int, len(newLines)+1)
+	}
+	for i := len(oldLines) - 1; i >= 0; i-- {
+		for j := len(newLines) - 1; j >= 0; j-- {
+			if oldLines[i] == newLines[j] {
+				lcs[i][j] = lcs[i+1][j+1] + 1
+			} else if lcs[i+1][j] >= lcs[i][j+1] {
+				lcs[i][j] = lcs[i+1][j]
+			} else {
+				lcs[i][j] = lcs[i][j+1]
+			}
+		}
+	}
+	var ops []diffOp
+	for i, j := 0, 0; i < len(oldLines) || j < len(newLines); {
+		switch {
+		case i < len(oldLines) && j < len(newLines) && oldLines[i] == newLines[j]:
+			ops = append(ops, diffOp{kind: ' ', line: oldLines[i]})
+			i++
+			j++
+		case j < len(newLines) && (i == len(oldLines) || lcs[i][j+1] > lcs[i+1][j]):
+			ops = append(ops, diffOp{kind: '+', line: newLines[j]})
+			j++
+		default:
+			ops = append(ops, diffOp{kind: '-', line: oldLines[i]})
+			i++
+		}
+	}
+	return ops
 }
 
 func readLazyConfig(path string) (*config.Config, error) {

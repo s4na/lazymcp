@@ -171,6 +171,12 @@ lazymcp migrate --dry-run
 
 `--write` を指定しない限り、プレビューがデフォルトです。意図を明示するために `--dry-run` も指定できます。
 
+移行で変更される lazymcp 設定と Codex 設定を、書き込まずに unified diff として確認できます。
+
+```bash
+lazymcp migrate --diff
+```
+
 インポートしたサーバーを lazymcp の設定に書き込みます。
 
 ```bash

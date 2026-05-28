@@ -195,6 +195,68 @@ command = "npx"
 	}
 }
 
+func TestMigrateCodexRejectsDiffWithWrite(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	cmd := newRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"--config", filepath.Join(dir, "lazymcp.yaml"),
+		"migrate", "--source-path", source, "--diff", "--write",
+	})
+
+	err = cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--diff and --write cannot be used together") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestMigrateDiffDefaultsToCodexAndRegistersProxyInPreview(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	cmd := newRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"--config", target,
+		"migrate", "--source-path", source, "--diff",
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !strings.Contains(out.String(), "diffs:") {
+		t.Fatalf("output missing diffs:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "+[mcp_servers.lazymcp]") {
+		t.Fatalf("output missing Codex proxy diff:\n%s", out.String())
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("diff wrote target config")
+	}
+}
+
 func TestMigrateWriteCreatesConfigAndRegistersProxy(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")

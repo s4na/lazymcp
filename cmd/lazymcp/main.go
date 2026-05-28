@@ -149,9 +149,12 @@ func newMigrateCommand(configPath *string) *cobra.Command {
 		if dryRun && opts.Write {
 			return fmt.Errorf("--dry-run and --write cannot be used together")
 		}
+		if opts.Diff && opts.Write {
+			return fmt.Errorf("--diff and --write cannot be used together")
+		}
 		opts.Source = migrate.SourceCodex
 		opts.ConfigPath = *configPath
-		opts.UpdateClient = opts.UpdateClient || opts.Write
+		opts.UpdateClient = opts.UpdateClient || opts.Write || opts.Diff
 		plan, err := migrate.Run(opts)
 		if plan != nil {
 			fmt.Fprint(cmd.OutOrStdout(), migrate.FormatPlan(plan))
@@ -167,6 +170,7 @@ func newMigrateCommand(configPath *string) *cobra.Command {
 		},
 	}
 	cmd.PersistentFlags().BoolVar(&opts.Write, "write", false, "write lazymcp config and update Codex MCP settings")
+	cmd.PersistentFlags().BoolVar(&opts.Diff, "diff", false, "show the lazymcp and Codex config changes as a unified diff without writing files")
 	cmd.PersistentFlags().BoolVar(&opts.Overwrite, "overwrite", false, "overwrite existing lazymcp server entries")
 	cmd.PersistentFlags().StringVar(&opts.SourcePath, "source-path", "", "source client config path")
 	cmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "preview the migration without writing files (default unless --write is set)")
