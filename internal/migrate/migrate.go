@@ -177,7 +177,8 @@ func codexAlreadyUsesLazyProxy(raw map[string]any, configPath string) bool {
 		return false
 	}
 	wantConfigPath := absoluteOrOriginal(configPath)
-	return isLazyMCPProxy(srv) && len(srv.Args) == 3 && srv.Args[0] == "serve" && srv.Args[1] == "--config" && srv.Args[2] == wantConfigPath
+	gotConfigPath, ok := lazyProxyConfigPath(srv.Args)
+	return isLazyMCPProxy(srv) && ok && samePath(gotConfigPath, wantConfigPath)
 }
 
 func absoluteOrOriginal(path string) string {
@@ -247,12 +248,15 @@ func mergeConflicts(path string, incoming map[string]config.Server, overwrite bo
 	var conflicts []string
 	namespaces := map[string]string{}
 	for name, srv := range existing.Servers {
-		if isLazyConfigServer(srv) {
+		if isLazyConfigServer(srv, path) {
 			continue
 		}
 		namespaces[srv.NamespaceOrName(name)] = name
 	}
 	for name, srv := range incoming {
+		if existingSrv, ok := existing.Servers[name]; ok && isLazyConfigServer(existingSrv, path) {
+			continue
+		}
 		if existingSrv, ok := existing.Servers[name]; ok && !overwrite && !sameImportedServer(name, existingSrv, srv) {
 			conflicts = append(conflicts, fmt.Sprintf("server name %q already exists", name))
 		}
@@ -273,7 +277,7 @@ func writeConfig(path string, incoming map[string]config.Server, overwrite bool)
 		}
 		cfg = &config.Config{Servers: map[string]config.Server{}}
 	}
-	changed := removeLazyConfigServers(cfg)
+	changed := removeLazyConfigServers(cfg, path)
 	for name, srv := range incoming {
 		existing, exists := cfg.Servers[name]
 		if exists && !overwrite && sameImportedServer(name, existing, srv) {
@@ -324,10 +328,10 @@ func applyDefaults(cfg *config.Config) {
 	}
 }
 
-func removeLazyConfigServers(cfg *config.Config) bool {
+func removeLazyConfigServers(cfg *config.Config, configPath string) bool {
 	changed := false
 	for name, srv := range cfg.Servers {
-		if isLazyConfigServer(srv) {
+		if isLazyConfigServer(srv, configPath) {
 			delete(cfg.Servers, name)
 			changed = true
 		}
@@ -712,6 +716,49 @@ func isLazyMCPProxy(srv clientServer) bool {
 	return false
 }
 
-func isLazyConfigServer(srv config.Server) bool {
-	return isLazyMCPProxy(clientServer{Command: srv.Command, Args: srv.Args})
+func lazyProxyConfigPath(args []string) (string, bool) {
+	for i, arg := range args {
+		if arg == "--config" || arg == "-c" {
+			if i+1 < len(args) {
+				return args[i+1], true
+			}
+			return "", false
+		}
+		if value, ok := strings.CutPrefix(arg, "--config="); ok {
+			return value, true
+		}
+	}
+	return "", false
+}
+
+func samePath(a, b string) bool {
+	return canonicalPath(a) == canonicalPath(b)
+}
+
+func canonicalPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	if !filepath.IsAbs(path) {
+		if abs, err := filepath.Abs(path); err == nil {
+			path = abs
+		}
+	}
+	path = filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		return resolved
+	}
+	return path
+}
+
+func isLazyConfigServer(srv config.Server, configPath string) bool {
+	client := clientServer{Command: srv.Command, Args: srv.Args}
+	if !isLazyMCPProxy(client) {
+		return false
+	}
+	proxyConfigPath, ok := lazyProxyConfigPath(srv.Args)
+	if !ok {
+		return samePath(configPath, config.DefaultPath())
+	}
+	return samePath(proxyConfigPath, configPath)
 }
