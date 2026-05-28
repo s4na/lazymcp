@@ -74,7 +74,7 @@ backend server itself.
 - `running`: the backend process is active.
 - `stopped`: the backend is not running after an explicit shutdown or before it has been started.
 - `idle-stopped`: the backend was stopped because `idle_timeout` elapsed.
-- `crashed`: the backend exited unexpectedly, failed to start, or was stopped after a request error.
+- `crashed`: the backend exited unexpectedly, failed to start, or was stopped after a request timeout or transport error.
 
 Lifecycle metadata includes last started time, last stopped time, stop reason, and last error.
 
@@ -82,6 +82,6 @@ Lifecycle metadata includes last started time, last stopped time, stop reason, a
 lazymcp inspect --config config.yaml
 ```
 
-`inspect` prints the configured backends with lifecycle columns. Because it runs as a separate CLI
-process, it cannot read live in-memory state from an already-running `lazymcp serve` session; before
-a backend is started in that process, the status is shown as `stopped`.
+Standalone `inspect` prints the configured backends with lifecycle columns and their initial
+process-local state. Because it runs as a separate CLI process, it cannot read live in-memory state
+from an already-running `lazymcp serve` session; its configured backends are shown as `stopped`.

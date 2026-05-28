@@ -137,8 +137,8 @@ func (m *Manager) reap(name string, proc *Process) {
 		}
 		state = proc.Snapshot()
 	}
-	m.recordStoppedLocked(name, state)
 	if m.procs[name] == proc {
+		m.recordStoppedLocked(name, state)
 		delete(m.procs, name)
 	}
 }
