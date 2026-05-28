@@ -5,6 +5,12 @@
 ## Install
 
 ```bash
+brew install s4na/lazymcp/lazymcp
+```
+
+Or install with Go:
+
+```bash
 go install github.com/s4na/lazymcp/cmd/lazymcp@latest
 ```
 
