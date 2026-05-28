@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"text/tabwriter"
+	"time"
 
+	"github.com/s4na/lazymcp/internal/backend"
 	"github.com/s4na/lazymcp/internal/config"
 	"github.com/s4na/lazymcp/internal/server"
 	"github.com/spf13/cobra"
@@ -62,14 +65,49 @@ func newRootCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			manager := backend.NewManager(os.Stderr)
+			states := manager.States(cfg.ServerNames())
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "NAME\tNAMESPACE\tSTATUS\tLAST_STARTED\tLAST_STOPPED\tSTOP_REASON\tLAST_ERROR\tCOMMAND")
 			for _, name := range cfg.ServerNames() {
 				srv := cfg.Servers[name]
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", name, srv.NamespaceOrName(name), srv.CommandLine())
+				state := states[name]
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+					name,
+					srv.NamespaceOrName(name),
+					state.Status,
+					formatTime(state.LastStarted),
+					formatTime(state.LastStopped),
+					formatStopReason(state.StopReason),
+					formatEmpty(state.LastError),
+					srv.CommandLine(),
+				)
 			}
-			return nil
+			return w.Flush()
 		},
 	})
 
 	root.SetContext(context.Background())
 	return root
+}
+
+func formatTime(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return t.Format(time.RFC3339)
+}
+
+func formatStopReason(reason backend.StopReason) string {
+	if reason == "" {
+		return "-"
+	}
+	return string(reason)
+}
+
+func formatEmpty(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }
