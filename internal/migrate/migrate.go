@@ -389,10 +389,12 @@ func writeNewFile(path string, data []byte) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
 	n, err := file.Write(data)
 	if err == nil && n != len(data) {
 		err = io.ErrShortWrite
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
 	}
 	return err
 }
