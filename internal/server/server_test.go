@@ -60,6 +60,34 @@ func TestToolsListDiscoversUnconfiguredBackendTools(t *testing.T) {
 	srv.backends.Shutdown()
 }
 
+func TestToolsListDiscoversPaginatedBackendTools(t *testing.T) {
+	startCountPath := filepath.Join(t.TempDir(), "starts")
+	cfg := &config.Config{Servers: map[string]config.Server{
+		"github": helperServerWithEnv(startCountPath, "LAZYMCP_PAGINATED_TOOLS=1"),
+	}}
+	if err := cfg.SetServerTools("github", nil); err != nil {
+		t.Fatalf("initialize config routes: %v", err)
+	}
+
+	var out bytes.Buffer
+	var stderr bytes.Buffer
+	srv := New(cfg, bytes.NewReader(nil), &out, &stderr)
+	if err := srv.handle(context.Background(), mcp.Message{JSONRPC: "2.0", ID: "1", Method: "tools/list"}); err != nil {
+		t.Fatalf("tools/list: %v", err)
+	}
+
+	reader := mcp.NewCodec(&out, io.Discard)
+	listResponse, err := reader.Read()
+	if err != nil {
+		t.Fatalf("read tools/list response: %v", err)
+	}
+	tools := resultTools(t, listResponse.Result)
+	if len(tools) != 2 || tools[0].Name != "github.first" || tools[1].Name != "github.second" {
+		t.Fatalf("tools = %#v, want paginated tools with namespace", tools)
+	}
+	srv.backends.Shutdown()
+}
+
 func TestToolsListDoesNotRediscoverEmptyBackendTools(t *testing.T) {
 	dir := t.TempDir()
 	startCountPath := filepath.Join(dir, "starts")
@@ -133,6 +161,10 @@ func TestHelperProcess(t *testing.T) {
 			}))
 		case "notifications/initialized":
 		case "tools/list":
+			var params struct {
+				Cursor *string `json:"cursor"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
 			if path := os.Getenv("LAZYMCP_LIST_COUNT_PATH"); path != "" {
 				incrementCount(path)
 			}
@@ -141,6 +173,29 @@ func TestHelperProcess(t *testing.T) {
 			}
 			if os.Getenv("LAZYMCP_EMPTY_TOOLS") == "1" {
 				_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{"tools": []map[string]any{}}))
+				continue
+			}
+			if os.Getenv("LAZYMCP_PAGINATED_TOOLS") == "1" && params.Cursor == nil {
+				_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{
+					"tools": []map[string]any{
+						{
+							"name":        "first",
+							"description": "First page tool.",
+							"inputSchema": map[string]any{"type": "object"},
+						},
+					},
+					"nextCursor": "page-2",
+				}))
+				continue
+			}
+			if os.Getenv("LAZYMCP_PAGINATED_TOOLS") == "1" && params.Cursor != nil && *params.Cursor == "page-2" {
+				_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{"tools": []map[string]any{
+					{
+						"name":        "second",
+						"description": "Second page tool.",
+						"inputSchema": map[string]any{"type": "object"},
+					},
+				}}))
 				continue
 			}
 			_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{"tools": []map[string]any{

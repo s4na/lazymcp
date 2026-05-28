@@ -62,6 +62,19 @@ func TestManagerDiscoversBackendTools(t *testing.T) {
 	manager.Shutdown()
 }
 
+func TestManagerDiscoversPaginatedBackendTools(t *testing.T) {
+	startCountPath := t.TempDir() + "/starts"
+	manager := NewManager(os.Stderr)
+	tools, listErr := manager.ListTools(context.Background(), "test", helperServerWithEnv(startCountPath, "LAZYMCP_PAGINATED_TOOLS=1"), nil)
+	if listErr != nil {
+		t.Fatalf("list tools: %v", listErr)
+	}
+	if len(tools) != 2 || tools[0].Name != "first" || tools[1].Name != "second" {
+		t.Fatalf("tools = %#v, want first and second", tools)
+	}
+	manager.Shutdown()
+}
+
 func TestIDsEqualSupportsStringIDs(t *testing.T) {
 	if !idsEqual("42", "42") {
 		t.Fatalf("expected string ID to match")
@@ -161,6 +174,33 @@ func TestHelperProcess(t *testing.T) {
 				os.Exit(0)
 			}
 		case "tools/list":
+			var params struct {
+				Cursor *string `json:"cursor"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			if os.Getenv("LAZYMCP_PAGINATED_TOOLS") == "1" && params.Cursor == nil {
+				_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{
+					"tools": []map[string]any{
+						{
+							"name":        "first",
+							"description": "First page tool.",
+							"inputSchema": map[string]any{"type": "object"},
+						},
+					},
+					"nextCursor": "page-2",
+				}))
+				continue
+			}
+			if os.Getenv("LAZYMCP_PAGINATED_TOOLS") == "1" && params.Cursor != nil && *params.Cursor == "page-2" {
+				_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{"tools": []map[string]any{
+					{
+						"name":        "second",
+						"description": "Second page tool.",
+						"inputSchema": map[string]any{"type": "object"},
+					},
+				}}))
+				continue
+			}
 			_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{"tools": []map[string]any{
 				{
 					"name":        "ping",
