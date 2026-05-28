@@ -8,6 +8,87 @@ import (
 	"testing"
 )
 
+func TestInitCreatesEmptyConfig(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "nested", "config.yaml")
+	cmd := newRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--config", target, "init"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	data, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(data) != "servers: {}\n" {
+		t.Fatalf("config = %q", string(data))
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatalf("stat target: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("permissions = %o, want 600", got)
+	}
+	if !strings.Contains(out.String(), "created config: "+target) {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestInitRejectsExistingConfig(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(target, []byte("servers: {}\n"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	cmd := newRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--config", target, "init"})
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "config already exists") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestOpenLogFileCreatesHomeTmpLazyMCPLog(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	file, err := openLogFile()
+	if err != nil {
+		t.Fatalf("open log file: %v", err)
+	}
+	if _, err := file.WriteString("hello\n"); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatalf("close log: %v", err)
+	}
+
+	path := filepath.Join(home, "tmp", "lazymcp", "lazymcp.log")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	if string(data) != "hello\n" {
+		t.Fatalf("log = %q", string(data))
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat log: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("permissions = %o, want 600", got)
+	}
+}
+
 func TestMigrateCommandHidesSourceSelection(t *testing.T) {
 	cmd := newRootCommand()
 	var out bytes.Buffer

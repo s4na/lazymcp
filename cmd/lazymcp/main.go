@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
 	"text/tabwriter"
 	"time"
 
@@ -50,6 +52,19 @@ func newRootCommand() *cobra.Command {
 	})
 
 	root.AddCommand(&cobra.Command{
+		Use:   "init",
+		Short: "Create an empty lazymcp config file",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := initConfig(configPath); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "created config: %s\n", configPath)
+			return nil
+		},
+	})
+
+	root.AddCommand(&cobra.Command{
 		Use:   "serve",
 		Short: "Run the MCP stdio proxy",
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -57,7 +72,14 @@ func newRootCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			srv := server.New(cfg, os.Stdin, os.Stdout, os.Stderr)
+			logFile, err := openLogFile()
+			if err != nil {
+				return err
+			}
+			defer logFile.Close()
+			stderr := io.MultiWriter(os.Stderr, logFile)
+			fmt.Fprintf(logFile, "%s lazymcp serve starting with config %s\n", time.Now().Format(time.RFC3339), configPath)
+			srv := server.New(cfg, os.Stdin, os.Stdout, stderr)
 			return srv.Run(cmd.Context())
 		},
 	})
@@ -161,6 +183,43 @@ func newMigrateCommand(configPath *string) *cobra.Command {
 		},
 	})
 	return cmd
+}
+
+func initConfig(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("config already exists: %s", path)
+		}
+		return err
+	}
+	_, writeErr := file.WriteString("servers: {}\n")
+	if closeErr := file.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	return writeErr
+}
+
+func openLogFile() (*os.File, error) {
+	path, err := defaultLogPath()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return nil, err
+	}
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
+}
+
+func defaultLogPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, "tmp", "lazymcp", "lazymcp.log"), nil
 }
 
 func formatTime(t time.Time) string {

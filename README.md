@@ -17,6 +17,12 @@ go install github.com/s4na/lazymcp/cmd/lazymcp@latest
 
 ## 使い方
 
+空の lazymcp 設定ファイルを作成します。
+
+```bash
+lazymcp init
+```
+
 Codex にすでに設定されている MCP サーバーをインポートします。
 `--write` を指定すると、インポートしたサーバーを lazymcp 設定に書き込み、`lazymcp` だけを Codex の MCP サーバーとして登録します。
 
@@ -35,6 +41,7 @@ lazymcp migrate -y
 バックエンドのツールは、`github.search_repositories` のように名前空間のプレフィックス付きで公開されます。
 設定に `tools:` が書かれているバックエンドプロセスは、対応する最初の `tools/call` で起動し、アイドルタイムアウト後に停止します。
 Codex から移行した直後のように `tools:` が空のバックエンドは、クライアントからの最初の `tools/list` で起動してツール一覧を検出し、そのセッション内でキャッシュします。
+`lazymcp serve` は `~/tmp/lazymcp/lazymcp.log` に診断ログとバックエンド stderr を追記します。`~/tmp` がない環境では、起動時に `~/tmp/lazymcp` を作成します。
 
 `lazymcp migrate` は Codex の `~/.codex/config.toml` を読み取り、直接登録されている各 `[mcp_servers.<name>]` エントリを `~/.config/lazymcp/config.yaml` に移します。
 既存ファイルを置き換える前には、タイムスタンプ付きのバックアップを作成します。
