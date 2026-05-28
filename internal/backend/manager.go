@@ -44,6 +44,23 @@ func (m *Manager) Call(ctx context.Context, serverName string, srv config.Server
 	return proc.Call(ctx, toolName, args)
 }
 
+func (m *Manager) ListTools(ctx context.Context, serverName string, srv config.Server, initParams json.RawMessage) ([]config.Tool, *mcp.Error) {
+	proc, err := m.get(ctx, serverName, srv, initParams)
+	if err != nil {
+		return nil, &mcp.Error{Code: -32000, Message: err.Error()}
+	}
+	tools, listErr := proc.ListTools(ctx)
+	if listErr == nil || listErr.Code != -32000 {
+		return tools, listErr
+	}
+	m.remove(serverName, proc, StopReasonCrashed, listErr.Message)
+	proc, err = m.get(ctx, serverName, srv, initParams)
+	if err != nil {
+		return nil, &mcp.Error{Code: -32000, Message: err.Error()}
+	}
+	return proc.ListTools(ctx)
+}
+
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -254,6 +271,27 @@ func (p *Process) Call(ctx context.Context, toolName string, args json.RawMessag
 		return nil, resp.Error
 	}
 	return resp.Result, nil
+}
+
+func (p *Process) ListTools(ctx context.Context) ([]config.Tool, *mcp.Error) {
+	resp, err := p.request(ctx, "tools/list", nil)
+	if err != nil {
+		return nil, &mcp.Error{Code: -32000, Message: err.Error()}
+	}
+	if resp.Error != nil {
+		return nil, resp.Error
+	}
+	var result struct {
+		Tools []config.Tool `json:"tools"`
+	}
+	data, err := json.Marshal(resp.Result)
+	if err != nil {
+		return nil, &mcp.Error{Code: -32000, Message: err.Error()}
+	}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, &mcp.Error{Code: -32000, Message: "invalid tools/list result: " + err.Error()}
+	}
+	return result.Tools, nil
 }
 
 func (p *Process) request(ctx context.Context, method string, params json.RawMessage) (mcp.Message, error) {

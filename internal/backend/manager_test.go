@@ -46,6 +46,22 @@ func TestManagerPassesConfiguredEnvToBackend(t *testing.T) {
 	manager.Shutdown()
 }
 
+func TestManagerDiscoversBackendTools(t *testing.T) {
+	startCountPath := t.TempDir() + "/starts"
+	manager := NewManager(os.Stderr)
+	tools, listErr := manager.ListTools(context.Background(), "test", helperServer(startCountPath), nil)
+	if listErr != nil {
+		t.Fatalf("list tools: %v", listErr)
+	}
+	if len(tools) != 1 || tools[0].Name != "ping" {
+		t.Fatalf("tools = %#v, want ping", tools)
+	}
+	if tools[0].InputSchema["type"] != "object" {
+		t.Fatalf("input schema = %#v, want object schema", tools[0].InputSchema)
+	}
+	manager.Shutdown()
+}
+
 func TestIDsEqualSupportsStringIDs(t *testing.T) {
 	if !idsEqual("42", "42") {
 		t.Fatalf("expected string ID to match")
@@ -144,6 +160,14 @@ func TestHelperProcess(t *testing.T) {
 			if os.Getenv("LAZYMCP_EXIT_AFTER_INITIALIZED") == "1" {
 				os.Exit(0)
 			}
+		case "tools/list":
+			_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{"tools": []map[string]any{
+				{
+					"name":        "ping",
+					"description": "Ping the helper backend.",
+					"inputSchema": map[string]any{"type": "object"},
+				},
+			}}))
 		case "tools/call":
 			text := os.Getenv("LAZYMCP_CONFIG_ENV")
 			if text == "" {
