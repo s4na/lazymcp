@@ -83,6 +83,10 @@ func newMigrateCommand(configPath *string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "migrate",
 		Short: "Migrate existing client MCP settings into lazymcp config",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_ = cmd.Help()
+			return fmt.Errorf("migrate requires a source subcommand")
+		},
 	}
 	cmd.PersistentFlags().BoolVar(&opts.Write, "write", false, "write merged lazymcp config")
 	cmd.PersistentFlags().BoolVar(&opts.Overwrite, "overwrite", false, "overwrite existing lazymcp server entries")

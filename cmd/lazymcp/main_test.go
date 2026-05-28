@@ -52,3 +52,19 @@ command = "npx"
 		t.Fatalf("error = %v", err)
 	}
 }
+
+func TestMigrateWithoutSubcommandReturnsError(t *testing.T) {
+	cmd := newRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"migrate", "--write"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatalf("expected migrate without subcommand to fail")
+	}
+	if !strings.Contains(out.String(), "Migrate existing client MCP settings") {
+		t.Fatalf("help was not printed:\n%s", out.String())
+	}
+}

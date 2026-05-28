@@ -3,6 +3,7 @@ package migrate
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -116,10 +117,6 @@ func convert(servers map[string]clientServer) (map[string]config.Server, []strin
 	out := map[string]config.Server{}
 	var skipped []string
 	for name, srv := range servers {
-		if srv.Command == "" {
-			skipped = append(skipped, fmt.Sprintf("%s: missing command", name))
-			continue
-		}
 		if isLazyMCPProxy(srv) {
 			skipped = append(skipped, fmt.Sprintf("%s: already points to lazymcp", name))
 			continue
@@ -224,7 +221,7 @@ func FormatPlan(plan *Plan) string {
 			fmt.Fprintf(&b, "  - %s\n", path)
 		}
 	}
-	fmt.Fprintf(&b, "imported servers:\n")
+	fmt.Fprintf(&b, "servers to import:\n")
 	for _, name := range sortedServerNames(plan.Servers) {
 		srv := plan.Servers[name]
 		fmt.Fprintf(&b, "  - %s: %s\n", name, maskedCommandLine(srv))
@@ -376,15 +373,28 @@ func stringMap(value any) (map[string]string, error) {
 }
 
 func backupFile(path string) (string, error) {
-	backup := fmt.Sprintf("%s.bak.%s", path, time.Now().UTC().Format("20060102T150405Z"))
+	backup := fmt.Sprintf("%s.bak.%s", path, time.Now().UTC().Format("20060102T150405.000000000Z"))
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(backup, data, 0o600); err != nil {
+	if err := writeNewFile(backup, data); err != nil {
 		return "", err
 	}
 	return backup, nil
+}
+
+func writeNewFile(path string, data []byte) error {
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	n, err := file.Write(data)
+	if err == nil && n != len(data) {
+		err = io.ErrShortWrite
+	}
+	return err
 }
 
 func copyEnv(in map[string]string) map[string]string {
@@ -434,12 +444,11 @@ func maskSecret(key, value string) string {
 func maskArgs(args []string) []string {
 	out := append([]string(nil), args...)
 	for i, arg := range out {
-		upper := strings.ToUpper(arg)
-		if i > 0 && isSecretFlag(out[i-1]) {
+		if i > 0 && !strings.Contains(out[i-1], "=") && isSecretFlag(out[i-1]) {
 			out[i] = "<redacted>"
 			continue
 		}
-		if strings.Contains(upper, "TOKEN=") || strings.Contains(upper, "SECRET=") || strings.Contains(upper, "PASSWORD=") || strings.Contains(upper, "API_KEY=") {
+		if secretAssignment(arg) {
 			key, _, ok := strings.Cut(arg, "=")
 			if ok {
 				out[i] = key + "=<redacted>"
@@ -452,6 +461,14 @@ func maskArgs(args []string) []string {
 func isSecretFlag(arg string) bool {
 	upper := strings.ToUpper(strings.TrimLeft(arg, "-"))
 	return strings.Contains(upper, "TOKEN") || strings.Contains(upper, "SECRET") || strings.Contains(upper, "PASSWORD") || strings.Contains(upper, "API-KEY") || strings.Contains(upper, "API_KEY")
+}
+
+func secretAssignment(arg string) bool {
+	key, _, ok := strings.Cut(arg, "=")
+	if !ok {
+		return false
+	}
+	return isSecretFlag(key)
 }
 
 func isLazyMCPProxy(srv clientServer) bool {

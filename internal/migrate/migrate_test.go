@@ -48,6 +48,36 @@ DEBUG = "1"
 	}
 }
 
+func TestRunCodexDryRunMasksSecretAssignmentsInArgs(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github", "--api-key=sk-secret", "--api_key=sk-secret-two"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: filepath.Join(dir, "lazymcp.yaml"),
+		SourcePath: source,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	report := FormatPlan(plan)
+	if strings.Contains(report, "sk-secret") {
+		t.Fatalf("report leaked secret arg: %s", report)
+	}
+	if !strings.Contains(report, "--api-key=<redacted>") || !strings.Contains(report, "--api_key=<redacted>") {
+		t.Fatalf("report did not redact api key args: %s", report)
+	}
+}
+
 func TestRunCodexRejectsMissingMCPServersTable(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")
@@ -197,6 +227,51 @@ servers:
 	got := string(data)
 	if !strings.Contains(got, "github:") || !strings.Contains(got, "filesystem:") {
 		t.Fatalf("merged config missing servers:\n%s", got)
+	}
+}
+
+func TestRunWriteCreatesDistinctBackups(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	err = os.WriteFile(target, []byte(`
+servers:
+  github:
+    command: old
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	first, err := Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: target,
+		SourcePath: source,
+		Write:      true,
+		Overwrite:  true,
+	})
+	if err != nil {
+		t.Fatalf("first run: %v", err)
+	}
+	second, err := Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: target,
+		SourcePath: source,
+		Write:      true,
+		Overwrite:  true,
+	})
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if first.Backups[0] == second.Backups[0] {
+		t.Fatalf("backup path reused: %s", first.Backups[0])
 	}
 }
 
