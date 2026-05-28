@@ -17,7 +17,41 @@ go install github.com/s4na/lazymcp/cmd/lazymcp@latest
 
 ## Usage
 
-Create a config file:
+Import the MCP servers already configured in Codex and register `lazymcp` as the only Codex MCP server:
+
+```bash
+lazymcp migrate codex --write
+```
+
+After importing the existing Codex MCP servers, `lazymcp` asks whether it should replace
+Codex's direct MCP server registrations with a single `lazymcp` proxy entry. Answer `yes`
+to make both Codex CLI and Codex app use only `lazymcp` for MCP:
+
+```bash
+Register lazymcp as the only MCP server in the source client? [y/N] yes
+```
+
+For unattended setup, use `-y` to write the lazymcp config and accept the Codex registration prompt:
+
+```bash
+lazymcp migrate codex -y
+```
+
+Backend tools are exposed with their namespace prefix, such as `github.search_repositories`.
+The backend process is started on the first matching `tools/call` and stopped after its idle timeout.
+
+`lazymcp migrate codex` reads Codex's `~/.codex/config.toml`, moves each direct
+`[mcp_servers.<name>]` entry into `~/.config/lazymcp/config.yaml`, and creates timestamped
+backups before replacing existing files. The resulting Codex MCP settings contain only:
+
+```toml
+[mcp_servers.lazymcp]
+command = "lazymcp"
+args = ["serve", "--config", "/path/to/config.yaml"]
+```
+
+Create or edit the lazymcp config manually only when you want to add servers that are not already
+registered in Codex:
 
 ```yaml
 servers:
@@ -40,23 +74,6 @@ servers:
           required:
             - query
 ```
-
-Run the proxy as a stdio MCP server:
-
-```bash
-lazymcp serve --config config.yaml
-```
-
-Register only `lazymcp` in Codex:
-
-```toml
-[mcp_servers.lazymcp]
-command = "lazymcp"
-args = ["serve", "--config", "/path/to/config.yaml"]
-```
-
-Backend tools are exposed with their namespace prefix, such as `github.search_repositories`.
-The backend process is started on the first matching `tools/call` and stopped after its idle timeout.
 
 ### Backend commands
 
@@ -159,10 +176,19 @@ Write imported servers into the lazymcp config:
 lazymcp migrate codex --write --config ~/.config/lazymcp/config.yaml
 ```
 
+With `--write`, interactive terminals ask whether to replace Codex's direct MCP server entries
+with a single `lazymcp` proxy entry. Use `--register-client` to make that replacement explicitly,
+or `-y` to write the lazymcp config and accept the registration prompt in one step:
+
+```bash
+lazymcp migrate codex -y
+```
+
 `--write` safely merges server entries and creates a timestamped backup before replacing an existing lazymcp config. If a server name or namespace already exists, the migration stops with a deterministic conflict report. Use `--overwrite` only when you intentionally want the imported entry to replace an existing server with the same name; namespace conflicts with other servers still stop the migration.
 
 The migration reads Codex's `~/.codex/config.toml` and validates that it contains `[mcp_servers.<name>]` tables with a string `command`, optional string-array `args`, and optional string-value `env` table before importing anything.
 
 Dry-run reports mask environment values so tokens and secrets are not printed. Imported servers do not include tool schemas because Codex MCP settings only contain backend launch commands; add `tools:` entries after migration or discover them with your usual MCP tooling.
 
-After migration, remove direct backend MCP servers from Codex and leave only the lazymcp proxy entry.
+When Codex registration is enabled, the source Codex config is backed up and then rewritten so
+`[mcp_servers]` contains only `lazymcp`; other Codex settings are preserved.
