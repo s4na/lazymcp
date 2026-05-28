@@ -40,6 +40,53 @@ servers:
 	}
 }
 
+func TestLoadPreservesServerEnv(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+servers:
+  github:
+    command: npx
+    env:
+      GITHUB_TOKEN: token
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := cfg.Servers["github"].Env["GITHUB_TOKEN"]; got != "token" {
+		t.Fatalf("env token = %q", got)
+	}
+}
+
+func TestLoadAppliesDefaultsForNullDurations(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	err := os.WriteFile(path, []byte(`
+servers:
+  github:
+    command: npx
+    idle_timeout: null
+    request_timeout: null
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if got := time.Duration(cfg.Servers["github"].IdleTimeout); got != 5*time.Minute {
+		t.Fatalf("idle timeout = %s", got)
+	}
+	if got := time.Duration(cfg.Servers["github"].RequestTimeout); got != 10*time.Minute {
+		t.Fatalf("request timeout = %s", got)
+	}
+}
+
 func TestLoadRejectsDuplicateNamespace(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	err := os.WriteFile(path, []byte(`

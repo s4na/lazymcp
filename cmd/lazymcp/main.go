@@ -9,6 +9,7 @@ import (
 
 	"github.com/s4na/lazymcp/internal/backend"
 	"github.com/s4na/lazymcp/internal/config"
+	"github.com/s4na/lazymcp/internal/migrate"
 	"github.com/s4na/lazymcp/internal/server"
 	"github.com/spf13/cobra"
 )
@@ -108,8 +109,46 @@ func newRootCommand() *cobra.Command {
 		},
 	})
 
+	root.AddCommand(newMigrateCommand(&configPath))
+
 	root.SetContext(context.Background())
 	return root
+}
+
+func newMigrateCommand(configPath *string) *cobra.Command {
+	var opts migrate.Options
+	var dryRun bool
+	cmd := &cobra.Command{
+		Use:   "migrate",
+		Short: "Migrate existing client MCP settings into lazymcp config",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_ = cmd.Help()
+			return fmt.Errorf("migrate requires a source subcommand")
+		},
+	}
+	cmd.PersistentFlags().BoolVar(&opts.Write, "write", false, "write merged lazymcp config")
+	cmd.PersistentFlags().BoolVar(&opts.Overwrite, "overwrite", false, "overwrite existing lazymcp server entries")
+	cmd.PersistentFlags().StringVar(&opts.SourcePath, "source-path", "", "source client config path")
+	cmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "preview the migration without writing files (default unless --write is set)")
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "codex",
+		Short: "Migrate Codex MCP settings",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if dryRun && opts.Write {
+				return fmt.Errorf("--dry-run and --write cannot be used together")
+			}
+			opts.Source = migrate.SourceCodex
+			opts.ConfigPath = *configPath
+			plan, err := migrate.Run(opts)
+			if plan != nil {
+				fmt.Fprint(cmd.OutOrStdout(), migrate.FormatPlan(plan))
+			}
+			return err
+		},
+	})
+	return cmd
 }
 
 func formatTime(t time.Time) string {

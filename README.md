@@ -142,3 +142,27 @@ lazymcp inspect --config config.yaml
 Standalone `inspect` prints the configured backends with lifecycle columns and their initial
 process-local state. Because it runs as a separate CLI process, it cannot read live in-memory state
 from an already-running `lazymcp serve` session; its configured backends are shown as `stopped`.
+
+## Migrate Codex MCP Settings
+
+Preview MCP servers already configured in Codex:
+
+```bash
+lazymcp migrate codex --dry-run
+```
+
+Preview is the default unless `--write` is set; `--dry-run` is accepted to make the intent explicit.
+
+Write imported servers into the lazymcp config:
+
+```bash
+lazymcp migrate codex --write --config ~/.config/lazymcp/config.yaml
+```
+
+`--write` safely merges server entries and creates a timestamped backup before replacing an existing lazymcp config. If a server name or namespace already exists, the migration stops with a deterministic conflict report. Use `--overwrite` only when you intentionally want the imported entry to replace an existing server with the same name; namespace conflicts with other servers still stop the migration.
+
+The migration reads Codex's `~/.codex/config.toml` and validates that it contains `[mcp_servers.<name>]` tables with a string `command`, optional string-array `args`, and optional string-value `env` table before importing anything.
+
+Dry-run reports mask environment values so tokens and secrets are not printed. Imported servers do not include tool schemas because Codex MCP settings only contain backend launch commands; add `tools:` entries after migration or discover them with your usual MCP tooling.
+
+After migration, remove direct backend MCP servers from Codex and leave only the lazymcp proxy entry.

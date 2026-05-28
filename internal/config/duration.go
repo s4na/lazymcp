@@ -11,6 +11,8 @@ func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error {
 		return err
 	}
 	switch v := raw.(type) {
+	case nil:
+		*d = 0
 	case int:
 		*d = Duration(time.Duration(v) * time.Second)
 	case string:
@@ -23,6 +25,13 @@ func (d *Duration) UnmarshalYAML(unmarshal func(any) error) error {
 		return fmt.Errorf("unsupported duration value %T", raw)
 	}
 	return nil
+}
+
+func (d Duration) MarshalYAML() (any, error) {
+	if d == 0 {
+		return nil, nil
+	}
+	return time.Duration(d).String(), nil
 }
 
 type Duration time.Duration
