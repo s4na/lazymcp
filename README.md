@@ -6,8 +6,9 @@
 
 `lazymcp` の主な目的は、Codex のセッションごとに重いローカル stdio MCP サーバーが常駐し、合計メモリ使用量が増えることを避けることです。
 
-Codex には `lazymcp` だけを MCP サーバーとして登録し、実際のバックエンド MCP サーバーは最初に必要になったときだけ起動します。
+Codex には `lazymcp` だけを MCP サーバーとして登録し、`tools:` が設定済みのバックエンド MCP サーバーは、対応するツールが最初に呼ばれたときだけ起動します。
 使われていないバックエンドは `idle_timeout` 後に停止するため、Node.js や Python などで実装された重い stdio MCP サーバーを、各セッションで常に起動したままにする必要がなくなります。
+`tools:` が空のバックエンドは、最初の `tools/list` でツール検出のために一度起動します。
 
 対象になるのは、`command` と `args` で起動できるローカル stdio MCP サーバーです。
 Codex App の remote connector や remote HTTP MCP はローカルプロセスとして起動・停止できないため、`lazymcp` の遅延起動やアイドル停止によるメモリ削減の対象外です。
@@ -220,7 +221,7 @@ Codex 側がすでに `lazymcp` プロキシだけを指している場合も、
 各テーブルには、文字列の `command`、任意の文字列配列 `args`、任意の文字列値テーブル `env` を指定できます。
 同じ Codex 設定ディレクトリの `.tmp/plugins/plugins/*/.mcp.json` も探索し、plugin が提供する stdio 形式の `mcpServers` もインポートします。
 `type: "http"` や `url` だけを持つ remote MCP、Codex App の connector として管理される remote tools は、ローカルプロセスとして遅延起動できないため skipped として表示します。
-これらの remote connector / remote MCP は、Codex App 側で管理されるため、`lazymcp` に移行してもセッションごとのメモリ使用量を直接削減する対象にはなりません。
+これらの remote connector / remote MCP は、`lazymcp` がローカルプロセスとして起動・停止できないため、`lazymcp` に移行してもセッションごとのメモリ使用量を直接削減する対象にはなりません。
 Codex 設定ファイル内に unsupported な remote MCP が残っている場合、`--diff` / `--write` / `-y` はそれを削除しないように、lazymcp config の差分表示や書き込みと Codex 登録の書き換えを行う前に停止します。
 Codex App の tool cache に残っている connector も確認し、ローカル stdio command が無いため移行できない connector 名と tool 数を skipped に表示します。
 `[mcp_servers.<name>]` と import 可能な plugin MCP server がどちらも見つからない場合は、Codex App connectors/plugins が別管理の可能性があることを説明して停止します。
