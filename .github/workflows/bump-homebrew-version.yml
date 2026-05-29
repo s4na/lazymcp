@@ -1,16 +1,17 @@
 name: Bump Homebrew version
 
 on:
-  pull_request:
-    types: [closed]
+  push:
     branches: [main]
+    paths-ignore:
+      - Formula/lazymcp.rb
 
 permissions:
   contents: write
 
 jobs:
   bump:
-    if: github.event.pull_request.merged == true
+    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -21,10 +22,11 @@ jobs:
           persist-credentials: false
 
       - name: Bump and push patch version
-        id: bump
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
@@ -53,12 +55,15 @@ jobs:
             git add Formula/lazymcp.rb
             git commit -m "Bump Homebrew formula version to ${version}"
             if git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main; then
-              echo "version=${version}" >> "$GITHUB_OUTPUT"
               exit 0
             fi
 
-            echo "Push failed on attempt ${attempt}; retrying from the latest main" >&2
-            sleep $((attempt * 2))
+            if [ "${attempt}" -lt 3 ]; then
+              echo "Push failed on attempt ${attempt}; retrying from the latest main" >&2
+              sleep $((attempt * 2))
+            else
+              echo "Push failed after ${attempt} attempts" >&2
+            fi
           done
 
           exit 1
