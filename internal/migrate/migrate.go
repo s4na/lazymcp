@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -46,9 +47,11 @@ type clientConfig struct {
 }
 
 type clientServer struct {
-	Command string
-	Args    []string
-	Env     map[string]string
+	Type    string            `json:"type" toml:"type"`
+	Command string            `json:"command" toml:"command"`
+	Args    []string          `json:"args" toml:"args"`
+	Env     map[string]string `json:"env" toml:"env"`
+	URL     string            `json:"url" toml:"url"`
 }
 
 var nowUTC = func() time.Time {
@@ -214,14 +217,100 @@ func discoverCodex(opts Options) (map[string]config.Server, []string, []string, 
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	servers, skipped := convert(raw.MCPServers)
-	if len(servers) == 0 {
-		if len(skipped) > 0 {
-			return servers, []string{path}, skipped, nil
-		}
-		return nil, []string{path}, skipped, fmt.Errorf("no direct Codex MCP servers to import from %s; lazymcp currently imports only [mcp_servers.*] entries from Codex config.toml, and Codex App connectors or plugins may be managed separately", path)
+	mcpServers := raw.MCPServers
+	sourceFiles := []string{path}
+	skipped := []string{}
+	pluginServers, pluginFiles, pluginSkipped, err := readCodexPluginMCPManifests(filepath.Dir(path), mcpServers)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	return servers, []string{path}, skipped, nil
+	for name, srv := range pluginServers {
+		mcpServers[name] = srv
+	}
+	sourceFiles = append(sourceFiles, pluginFiles...)
+	skipped = append(skipped, pluginSkipped...)
+	servers, convertedSkipped := convert(mcpServers)
+	skipped = append(skipped, convertedSkipped...)
+	sort.Strings(skipped)
+	if len(servers) == 0 {
+		if hasExistingLazyProxySkip(skipped) {
+			return servers, sourceFiles, skipped, nil
+		}
+		return nil, sourceFiles, skipped, fmt.Errorf("no importable Codex MCP servers found from %s; lazymcp imports Codex config.toml [mcp_servers.*] entries and stdio plugin .mcp.json servers, but remote Codex App connectors/plugins may be managed separately", path)
+	}
+	return servers, sourceFiles, skipped, nil
+}
+
+func hasExistingLazyProxySkip(skipped []string) bool {
+	for _, item := range skipped {
+		if strings.Contains(item, "already points to lazymcp") {
+			return true
+		}
+	}
+	return false
+}
+
+func readCodexPluginMCPManifests(codexDir string, existing map[string]clientServer) (map[string]clientServer, []string, []string, error) {
+	pattern := filepath.Join(codexDir, ".tmp", "plugins", "plugins", "*", ".mcp.json")
+	paths, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	sort.Strings(paths)
+	servers := map[string]clientServer{}
+	var sourceFiles []string
+	var skipped []string
+	for _, path := range paths {
+		manifest, err := readPluginMCPManifest(path)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		sourceFiles = append(sourceFiles, path)
+		for name, srv := range manifest.MCPServers {
+			if _, ok := existing[name]; ok {
+				skipped = append(skipped, fmt.Sprintf("%s: plugin MCP manifest duplicates Codex config entry", name))
+				continue
+			}
+			if _, ok := servers[name]; ok {
+				skipped = append(skipped, fmt.Sprintf("%s: duplicate plugin MCP manifest entry", name))
+				continue
+			}
+			if srv.Command == "" {
+				if srv.Type != "" || srv.URL != "" {
+					skipped = append(skipped, fmt.Sprintf("%s: plugin MCP manifest uses unsupported remote transport", name))
+					continue
+				}
+				skipped = append(skipped, fmt.Sprintf("%s: plugin MCP manifest has no command", name))
+				continue
+			}
+			if srv.Type != "" && srv.Type != "stdio" {
+				skipped = append(skipped, fmt.Sprintf("%s: plugin MCP manifest uses unsupported %q transport", name, srv.Type))
+				continue
+			}
+			servers[name] = srv
+		}
+	}
+	sort.Strings(skipped)
+	return servers, sourceFiles, skipped, nil
+}
+
+type pluginMCPManifest struct {
+	MCPServers map[string]clientServer `json:"mcpServers"`
+}
+
+func readPluginMCPManifest(path string) (*pluginMCPManifest, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var manifest pluginMCPManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if manifest.MCPServers == nil {
+		manifest.MCPServers = map[string]clientServer{}
+	}
+	return &manifest, nil
 }
 
 func convert(servers map[string]clientServer) (map[string]config.Server, []string) {

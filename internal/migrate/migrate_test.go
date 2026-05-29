@@ -120,9 +120,9 @@ trust_level = "trusted"
 				t.Fatal("expected error")
 			}
 			for _, want := range []string{
-				"no direct Codex MCP servers to import",
-				"imports only [mcp_servers.*] entries",
-				"Codex App connectors or plugins may be managed separately",
+				"no importable Codex MCP servers found",
+				"imports Codex config.toml [mcp_servers.*] entries",
+				"remote Codex App connectors/plugins may be managed separately",
 				source,
 			} {
 				if !strings.Contains(err.Error(), want) {
@@ -130,6 +130,132 @@ trust_level = "trusted"
 				}
 			}
 		})
+	}
+}
+
+func TestRunCodexImportsPluginMCPManifestServers(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[projects."/tmp/repo"]
+trust_level = "trusted"
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	pluginDir := filepath.Join(dir, ".tmp", "plugins", "plugins", "build-ios-apps")
+	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+	manifest := filepath.Join(pluginDir, ".mcp.json")
+	err = os.WriteFile(manifest, []byte(`
+{
+  "mcpServers": {
+    "xcodebuildmcp": {
+      "command": "npx",
+      "args": ["-y", "xcodebuildmcp@latest", "mcp"],
+      "env": {
+        "XCODEBUILDMCP_ENABLED_WORKFLOWS": "simulator,ui-automation"
+      }
+    },
+    "cloudflare-api": {
+      "type": "http",
+      "url": "https://mcp.cloudflare.com/mcp"
+    }
+  }
+}
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write plugin manifest: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   target,
+		SourcePath:   source,
+		Write:        true,
+		UpdateClient: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if _, ok := plan.Servers["xcodebuildmcp"]; !ok {
+		t.Fatalf("servers = %#v, want xcodebuildmcp", plan.Servers)
+	}
+	if got := plan.Servers["xcodebuildmcp"].Env["XCODEBUILDMCP_ENABLED_WORKFLOWS"]; got != "simulator,ui-automation" {
+		t.Fatalf("env = %q", got)
+	}
+	if !containsString(plan.SourceFiles, source) || !containsString(plan.SourceFiles, manifest) {
+		t.Fatalf("source files = %#v, want config and manifest", plan.SourceFiles)
+	}
+	if !containsString(plan.Skipped, "cloudflare-api: plugin MCP manifest uses unsupported remote transport") {
+		t.Fatalf("skipped = %#v", plan.Skipped)
+	}
+	cfg, err := readLazyConfig(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if _, ok := cfg.Servers["xcodebuildmcp"]; !ok {
+		t.Fatalf("target servers = %#v, want xcodebuildmcp", cfg.Servers)
+	}
+	gotCodex, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if strings.Contains(string(gotCodex), "[mcp_servers.xcodebuildmcp]") || !strings.Contains(string(gotCodex), "[mcp_servers.lazymcp]") {
+		t.Fatalf("codex source not rewritten to lazymcp only:\n%s", string(gotCodex))
+	}
+}
+
+func TestRunCodexRejectsOnlyUnsupportedPluginMCPManifests(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[projects."/tmp/repo"]
+trust_level = "trusted"
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	pluginDir := filepath.Join(dir, ".tmp", "plugins", "plugins", "cloudflare")
+	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+	err = os.WriteFile(filepath.Join(pluginDir, ".mcp.json"), []byte(`
+{
+  "mcpServers": {
+    "cloudflare-api": {
+      "type": "http",
+      "url": "https://mcp.cloudflare.com/mcp"
+    }
+  }
+}
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write plugin manifest: %v", err)
+	}
+
+	_, err = Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   target,
+		SourcePath:   source,
+		Write:        true,
+		UpdateClient: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "no importable Codex MCP servers found") {
+		t.Fatalf("error = %v", err)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("target config was created for unsupported-only plugin")
+	}
+	gotCodex, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if strings.Contains(string(gotCodex), "[mcp_servers.lazymcp]") {
+		t.Fatalf("source was rewritten despite no importable servers:\n%s", string(gotCodex))
 	}
 }
 
@@ -1041,4 +1167,13 @@ servers:
 	if plan == nil || len(plan.Conflicts) != 1 || !strings.Contains(plan.Conflicts[0], "namespace") {
 		t.Fatalf("conflicts = %#v", plan)
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

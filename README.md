@@ -194,8 +194,9 @@ Codex 側がすでに `lazymcp` プロキシだけを指している場合も、
 
 移行処理は Codex の `~/.codex/config.toml` を読み取り、直接登録された `[mcp_servers.<name>]` テーブルをインポートします。
 各テーブルには、文字列の `command`、任意の文字列配列 `args`、任意の文字列値テーブル `env` を指定できます。
-`[mcp_servers.<name>]` が見つからない場合は、Codex Desktop などが別の場所で管理している MCP/connectors は現在の自動移行対象外であることを説明して停止します。
-Codex App の connector/plugin 経由で表示されるツールは、Codex CLI の `codex mcp list` に出る直接 MCP 設定とは別に管理される場合があり、現在の `migrate` はそれらを lazymcp に移行しません。
+同じ Codex 設定ディレクトリの `.tmp/plugins/plugins/*/.mcp.json` も探索し、plugin が提供する stdio 形式の `mcpServers` もインポートします。
+`type: "http"` や `url` だけを持つ remote MCP、Codex App の connector として管理される remote tools は、ローカルプロセスとして遅延起動できないため skipped として表示します。
+`[mcp_servers.<name>]` と import 可能な plugin MCP server がどちらも見つからない場合は、Codex App connectors/plugins が別管理の可能性があることを説明して停止します。
 移行前後には Codex と lazymcp の設定ファイルを再読み込みして検証し、形式や必須項目に問題がある場合はエラーを出して停止します。
 
 ドライランのレポートでは、トークンやシークレットが出力されないように環境変数の値をマスクします。
