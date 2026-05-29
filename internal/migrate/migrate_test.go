@@ -519,7 +519,10 @@ NODE_REPL_NODE_PATH = "/Applications/Codex.app/Contents/Resources/node"
   "mcpServers": {
     "xcodebuildmcp": {
       "command": "npx",
-      "args": ["-y", "xcodebuildmcp@latest", "mcp"]
+      "args": ["-y", "xcodebuildmcp@latest", "mcp"],
+      "env": {
+        "CODEX_CLI_PATH": "/Applications/Codex.app/Contents/Resources/codex"
+      }
     }
   }
 }
@@ -540,6 +543,9 @@ NODE_REPL_NODE_PATH = "/Applications/Codex.app/Contents/Resources/node"
 	}
 	if _, ok := plan.Servers["xcodebuildmcp"]; !ok {
 		t.Fatalf("servers = %#v, want xcodebuildmcp", plan.Servers)
+	}
+	if got := plan.Servers["xcodebuildmcp"].Env["CODEX_CLI_PATH"]; got == "" {
+		t.Fatalf("xcodebuildmcp env = %#v, want plugin-provided env preserved", plan.Servers["xcodebuildmcp"].Env)
 	}
 	if _, ok := plan.Servers["node_repl"]; ok {
 		t.Fatalf("servers = %#v, want bundled node_repl skipped", plan.Servers)

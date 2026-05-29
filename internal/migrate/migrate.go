@@ -316,16 +316,12 @@ func discoverCodex(opts Options) (map[string]config.Server, []string, []string, 
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	mcpServers := raw.MCPServers
 	sourceFiles := []string{path}
 	skipped := append([]string(nil), raw.Skipped...)
 	blocked := []string{}
-	pluginServers, pluginFiles, pluginSkipped, err := readCodexPluginMCPManifests(filepath.Dir(path), mcpServers)
+	pluginServers, pluginFiles, pluginSkipped, err := readCodexPluginMCPManifests(filepath.Dir(path), raw.MCPServers)
 	if err != nil {
 		return nil, nil, nil, nil, err
-	}
-	for name, srv := range pluginServers {
-		mcpServers[name] = srv
 	}
 	sourceFiles = append(sourceFiles, pluginFiles...)
 	skipped = append(skipped, pluginSkipped...)
@@ -335,9 +331,14 @@ func discoverCodex(opts Options) (map[string]config.Server, []string, []string, 
 	}
 	sourceFiles = append(sourceFiles, appCacheFiles...)
 	skipped = append(skipped, appCacheSkipped...)
-	servers, convertedSkipped := convert(mcpServers)
-	skipped = append(skipped, convertedSkipped...)
-	blocked = append(blocked, directCodexBlockedSkips(convertedSkipped)...)
+	servers, directSkipped := convert(raw.MCPServers, true)
+	pluginConverted, pluginConvertedSkipped := convert(pluginServers, false)
+	for name, srv := range pluginConverted {
+		servers[name] = srv
+	}
+	skipped = append(skipped, directSkipped...)
+	skipped = append(skipped, pluginConvertedSkipped...)
+	blocked = append(blocked, directCodexBlockedSkips(directSkipped)...)
 	sort.Strings(skipped)
 	sort.Strings(blocked)
 	return servers, sourceFiles, skipped, blocked, nil
@@ -507,7 +508,7 @@ func readAppToolsCache(path string) (*appToolsCache, error) {
 	return &cache, nil
 }
 
-func convert(servers map[string]clientServer) (map[string]config.Server, []string) {
+func convert(servers map[string]clientServer, preserveBundled bool) (map[string]config.Server, []string) {
 	out := map[string]config.Server{}
 	var skipped []string
 	for name, srv := range servers {
@@ -515,7 +516,7 @@ func convert(servers map[string]clientServer) (map[string]config.Server, []strin
 			skipped = append(skipped, fmt.Sprintf("%s: already points to lazymcp", name))
 			continue
 		}
-		if isCodexBundledMCPServer(name, srv) {
+		if preserveBundled && isCodexBundledMCPServer(name, srv) {
 			skipped = append(skipped, fmt.Sprintf("%s: Codex bundled MCP server is preserved in Codex config and not migrated by default", name))
 			continue
 		}

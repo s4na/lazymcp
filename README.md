@@ -203,7 +203,7 @@ lazymcp migrate --diff
 lazymcp migrate --write --config ~/.config/lazymcp/config.yaml
 ```
 
-`--write` を指定すると、Codex の直接的な MCP サーバーエントリを単一の `lazymcp` プロキシエントリに置き換えます。
+`--write` を指定すると、Codex の直接的な MCP サーバーエントリを `lazymcp` プロキシエントリに置き換えます。保持が必要な Codex 同梱 MCP がある場合は、そのエントリも残します。
 `-y` を使うと、`--write` と同じように lazymcp 設定を書き込み、Codex 登録も行います。
 
 ```bash
@@ -212,7 +212,7 @@ lazymcp migrate -y
 
 `--write` はサーバーエントリを安全にマージし、既存の lazymcp 設定を置き換える前にタイムスタンプ付きのバックアップを作成します。
 すでに同じ内容のサーバーが lazymcp 設定に存在する場合は、既存の `tools:` などを保持したまま変更なしとして扱います。
-Codex 側がすでに `lazymcp` プロキシだけを指している場合も、移行は成功した no-op になります。
+Codex 側がすでに `lazymcp` プロキシと保持対象の Codex 同梱 MCP だけを指している場合も、移行は成功した no-op になります。
 移行時に lazymcp 設定の中に `lazymcp serve` 自身へのプロキシエントリが見つかった場合は、自己参照を避けるため削除します。
 別内容のサーバー名または名前空間がすでに存在する場合、移行は決定的な競合レポートを出して停止します。
 同じ名前の既存サーバーをインポートしたエントリで置き換えたいことが明確な場合だけ、`--overwrite` を使ってください。
