@@ -38,6 +38,7 @@ type Plan struct {
 	Servers      map[string]config.Server
 	Conflicts    []string
 	Skipped      []string
+	Blocked      []string
 	ChangedFiles []string
 	Backups      []string
 }
@@ -63,7 +64,7 @@ func Run(opts Options) (*Plan, error) {
 	if opts.ConfigPath == "" {
 		opts.ConfigPath = config.DefaultPath()
 	}
-	servers, sourceFiles, skipped, err := discover(opts)
+	servers, sourceFiles, skipped, blocked, err := discover(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +74,7 @@ func Run(opts Options) (*Plan, error) {
 		SourceFiles: sourceFiles,
 		Servers:     servers,
 		Skipped:     skipped,
+		Blocked:     blocked,
 	}
 	if len(servers) == 0 && !hasExistingLazyProxySkip(skipped) {
 		return plan, fmt.Errorf("no importable Codex MCP servers found from %s; lazymcp imports Codex config.toml [mcp_servers.*] entries and stdio plugin .mcp.json servers, but remote Codex App connectors/plugins may be managed separately", primarySourceFile(sourceFiles))
@@ -106,6 +108,9 @@ func Run(opts Options) (*Plan, error) {
 		if len(sourceFiles) == 0 {
 			return plan, fmt.Errorf("no source client config path discovered")
 		}
+		if len(plan.Blocked) > 0 {
+			return plan, fmt.Errorf("updating the source client would remove unsupported Codex MCP servers: %s", strings.Join(plan.Blocked, "; "))
+		}
 		changed, backups, err := writeClientProxy(opts.Source, sourceFiles[0], opts.ConfigPath)
 		if err != nil {
 			return plan, err
@@ -126,12 +131,12 @@ func primarySourceFile(sourceFiles []string) string {
 	return sourceFiles[0]
 }
 
-func discover(opts Options) (map[string]config.Server, []string, []string, error) {
+func discover(opts Options) (map[string]config.Server, []string, []string, []string, error) {
 	switch opts.Source {
 	case SourceCodex:
 		return discoverCodex(opts)
 	default:
-		return nil, nil, nil, fmt.Errorf("unsupported source %q", opts.Source)
+		return nil, nil, nil, nil, fmt.Errorf("unsupported source %q", opts.Source)
 	}
 }
 
@@ -215,25 +220,26 @@ func absoluteOrOriginal(path string) string {
 	return abs
 }
 
-func discoverCodex(opts Options) (map[string]config.Server, []string, []string, error) {
+func discoverCodex(opts Options) (map[string]config.Server, []string, []string, []string, error) {
 	path := opts.SourcePath
 	if path == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		path = filepath.Join(home, ".codex", "config.toml")
 	}
 	raw, err := readCodexConfig(path)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	mcpServers := raw.MCPServers
 	sourceFiles := []string{path}
 	skipped := append([]string(nil), raw.Skipped...)
+	blocked := []string{}
 	pluginServers, pluginFiles, pluginSkipped, err := readCodexPluginMCPManifests(filepath.Dir(path), mcpServers)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	for name, srv := range pluginServers {
 		mcpServers[name] = srv
@@ -242,14 +248,26 @@ func discoverCodex(opts Options) (map[string]config.Server, []string, []string, 
 	skipped = append(skipped, pluginSkipped...)
 	appCacheFiles, appCacheSkipped, err := readCodexAppToolCacheSkips(filepath.Dir(path))
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	sourceFiles = append(sourceFiles, appCacheFiles...)
 	skipped = append(skipped, appCacheSkipped...)
 	servers, convertedSkipped := convert(mcpServers)
 	skipped = append(skipped, convertedSkipped...)
+	blocked = append(blocked, directCodexBlockedSkips(convertedSkipped)...)
 	sort.Strings(skipped)
-	return servers, sourceFiles, skipped, nil
+	sort.Strings(blocked)
+	return servers, sourceFiles, skipped, blocked, nil
+}
+
+func directCodexBlockedSkips(skipped []string) []string {
+	var blocked []string
+	for _, item := range skipped {
+		if strings.Contains(item, "Codex MCP server uses unsupported") || strings.Contains(item, "Codex MCP server has no command") {
+			blocked = append(blocked, item)
+		}
+	}
+	return blocked
 }
 
 func hasExistingLazyProxySkip(skipped []string) bool {
@@ -643,6 +661,12 @@ func FormatPlan(plan *Plan) string {
 	if len(plan.Skipped) > 0 {
 		fmt.Fprintf(&b, "skipped:\n")
 		for _, item := range plan.Skipped {
+			fmt.Fprintf(&b, "  - %s\n", item)
+		}
+	}
+	if len(plan.Blocked) > 0 {
+		fmt.Fprintf(&b, "blocking source client update:\n")
+		for _, item := range plan.Blocked {
 			fmt.Fprintf(&b, "  - %s\n", item)
 		}
 	}

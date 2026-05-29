@@ -229,8 +229,8 @@ trust_level = "trusted"
 		Write:        true,
 		UpdateClient: true,
 	})
-	if err != nil {
-		t.Fatalf("run: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "updating the source client would remove unsupported Codex MCP servers") {
+		t.Fatalf("error = %v", err)
 	}
 	if _, ok := plan.Servers["xcodebuildmcp"]; !ok {
 		t.Fatalf("servers = %#v, want xcodebuildmcp", plan.Servers)
@@ -254,6 +254,9 @@ trust_level = "trusted"
 			t.Fatalf("skipped = %#v, want %q", plan.Skipped, want)
 		}
 	}
+	if !containsString(plan.Blocked, "remote: Codex MCP server uses unsupported remote transport") {
+		t.Fatalf("blocked = %#v", plan.Blocked)
+	}
 	cfg, err := readLazyConfig(target)
 	if err != nil {
 		t.Fatalf("read target: %v", err)
@@ -261,12 +264,15 @@ trust_level = "trusted"
 	if _, ok := cfg.Servers["xcodebuildmcp"]; !ok {
 		t.Fatalf("target servers = %#v, want xcodebuildmcp", cfg.Servers)
 	}
+	if _, ok := cfg.Servers["local"]; !ok {
+		t.Fatalf("target servers = %#v, want local", cfg.Servers)
+	}
 	gotCodex, err := os.ReadFile(source)
 	if err != nil {
 		t.Fatalf("read source: %v", err)
 	}
-	if strings.Contains(string(gotCodex), "[mcp_servers.xcodebuildmcp]") || !strings.Contains(string(gotCodex), "[mcp_servers.lazymcp]") {
-		t.Fatalf("codex source not rewritten to lazymcp only:\n%s", string(gotCodex))
+	if strings.Contains(string(gotCodex), "[mcp_servers.lazymcp]") {
+		t.Fatalf("codex source was rewritten despite blocked remote server:\n%s", string(gotCodex))
 	}
 }
 

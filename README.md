@@ -196,6 +196,7 @@ Codex 側がすでに `lazymcp` プロキシだけを指している場合も、
 各テーブルには、文字列の `command`、任意の文字列配列 `args`、任意の文字列値テーブル `env` を指定できます。
 同じ Codex 設定ディレクトリの `.tmp/plugins/plugins/*/.mcp.json` も探索し、plugin が提供する stdio 形式の `mcpServers` もインポートします。
 `type: "http"` や `url` だけを持つ remote MCP、Codex App の connector として管理される remote tools は、ローカルプロセスとして遅延起動できないため skipped として表示します。
+Codex 設定ファイル内に unsupported な remote MCP が残っている場合、`--write` / `-y` はそれを削除しないように Codex 登録の書き換え前に停止します。
 Codex App の tool cache に残っている connector も確認し、ローカル stdio command が無いため移行できない connector 名と tool 数を skipped に表示します。
 `[mcp_servers.<name>]` と import 可能な plugin MCP server がどちらも見つからない場合は、Codex App connectors/plugins が別管理の可能性があることを説明して停止します。
 移行前後には Codex と lazymcp の設定ファイルを再読み込みして検証し、形式や必須項目に問題がある場合はエラーを出して停止します。
@@ -206,6 +207,7 @@ Codex App の tool cache に残っている connector も確認し、ローカ�
 検出した一覧は現在の stdio セッション内で保持されます。ツールを完全に遅延起動したい場合や、起動できない環境でも一覧を表示したい場合は、`tools:` エントリを設定ファイルに追加してください。
 
 Codex 登録が有効な場合、元の Codex 設定はバックアップされ、`[mcp_servers]` には `lazymcp` だけが残るように書き換えられます。
+ただし、移行できない direct Codex MCP server がある場合は、その server を消さないために書き換えを停止します。
 その他の Codex 設定は保持されます。
 
 ## ライセンス
