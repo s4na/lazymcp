@@ -2,7 +2,7 @@ class Lazymcp < Formula
   desc "Lightweight MCP proxy/router that lazily spawns backend MCP servers"
   homepage "https://github.com/s4na/lazymcp"
   url "https://github.com/s4na/lazymcp.git", branch: "main"
-  version "0.0.3"
+  version "0.0.4"
 
   depends_on "go" => :build
 
