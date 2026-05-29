@@ -155,10 +155,11 @@ func TestRunCodexDiffMasksSecrets(t *testing.T) {
 	target := filepath.Join(dir, "lazymcp.yaml")
 	sourceData := []byte(`
 api_key = "codex-top-secret"
+base_url = "https://codex-user:codex-pass@example.com/mcp?debug=1&token=codex-url-secret"
 
 [mcp_servers.api-key-service]
 command = "npx"
-args = ["-y", "github", "--api-key=sk-secret", "--apiKey=sk-camel", "--key", "plain-key-secret", "--token", "token-secret"]
+args = ["-y", "github", "--api-key=sk-secret", "--apiKey=sk-camel", "--key", "plain-key-secret", "--token", "token-secret", "https://arg-user:arg-pass@example.com/mcp?debug=1&api_key=arg-url-secret", "--endpoint=https://endpoint-user:endpoint-pass@example.com/mcp?password=endpoint-url-secret"]
 
 [mcp_servers.api-key-service.env]
 GITHUB_TOKEN = "secret-token"
@@ -169,6 +170,7 @@ token = "codex-project-secret"
 `)
 	targetData := []byte(`
 api_key: lazy-top-secret
+base_url: https://lazy-user:lazy-pass@example.com/mcp?debug=1&secret=lazy-url-secret
 servers:
   existing:
     command: npx
@@ -198,7 +200,7 @@ servers:
 	}
 
 	report := FormatPlan(plan)
-	for _, secret := range []string{"sk-secret", "sk-camel", "plain-key-secret", "token-secret", "secret-token", "old-secret", "codex-top-secret", "codex-project-secret", "lazy-top-secret"} {
+	for _, secret := range []string{"sk-secret", "sk-camel", "plain-key-secret", "token-secret", "secret-token", "old-secret", "codex-top-secret", "codex-project-secret", "lazy-top-secret", "codex-user", "codex-pass", "codex-url-secret", "arg-user", "arg-pass", "arg-url-secret", "endpoint-user", "endpoint-pass", "endpoint-url-secret", "lazy-user", "lazy-pass", "lazy-url-secret"} {
 		if strings.Contains(report, secret) {
 			t.Fatalf("diff leaked secret %q:\n%s", secret, report)
 		}

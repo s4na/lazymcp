@@ -665,9 +665,21 @@ func redactConfigValueIn(key, parentKey string, value any) any {
 			out = append(out, redactConfigValueIn("", parentKey, item))
 		}
 		return out
+	case string:
+		return redactStringValue(typed)
 	default:
 		return value
 	}
+}
+
+func redactStringValue(value string) string {
+	if key, urlValue, ok := strings.Cut(value, "="); ok && !strings.Contains(key, "://") && strings.Contains(urlValue, "://") {
+		return key + "=" + redactURL(urlValue)
+	}
+	if strings.Contains(value, "://") {
+		return redactURL(value)
+	}
+	return value
 }
 
 func isServerCollectionKey(key string) bool {
@@ -1245,7 +1257,9 @@ func maskArgs(args []string) []string {
 			if ok {
 				out[i] = key + "=<redacted>"
 			}
+			continue
 		}
+		out[i] = redactStringValue(out[i])
 	}
 	return out
 }
