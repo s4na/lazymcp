@@ -82,6 +82,217 @@ args = ["-y", "github", "--api-key=sk-secret", "--api_key=sk-secret-two"]
 	}
 }
 
+func TestRunCodexDiffShowsConfigChangesWithoutWriting(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	sourceData := []byte(`
+model = "gpt-5"
+
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github"]
+`)
+	targetData := []byte(`
+servers:
+  filesystem:
+    command: npx
+    namespace: filesystem
+`)
+	if err := os.WriteFile(source, sourceData, 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := os.WriteFile(target, targetData, 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   target,
+		SourcePath:   source,
+		Diff:         true,
+		UpdateClient: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	report := FormatPlan(plan)
+	if len(plan.Diffs) != 2 {
+		t.Fatalf("diffs = %#v", plan.Diffs)
+	}
+	if !strings.Contains(report, "diffs:\n--- "+target) {
+		t.Fatalf("report missing target diff:\n%s", report)
+	}
+	if !strings.Contains(report, "+    github:") {
+		t.Fatalf("report missing imported github server:\n%s", report)
+	}
+	if !strings.Contains(report, "--- "+source) {
+		t.Fatalf("report missing source diff:\n%s", report)
+	}
+	if !strings.Contains(report, "-[mcp_servers.github]") || !strings.Contains(report, "+[mcp_servers.lazymcp]") {
+		t.Fatalf("report missing Codex before/after MCP change:\n%s", report)
+	}
+	gotSource, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if string(gotSource) != string(sourceData) {
+		t.Fatalf("source changed:\n%s", string(gotSource))
+	}
+	gotTarget, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(gotTarget) != string(targetData) {
+		t.Fatalf("target changed:\n%s", string(gotTarget))
+	}
+}
+
+func TestRunCodexDiffMasksSecrets(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	sourceData := []byte(`
+api_key = "codex-top-secret"
+base_url = "https://codex-user:codex-pass@example.com/mcp?debug=1&token=codex-url-secret"
+
+[mcp_servers.api-key-service]
+command = "npx"
+args = ["-y", "github", "--api-key=sk-secret", "--apiKey=sk-camel", "--key", "plain-key-secret", "--token", "token-secret", "https://arg-user:arg-pass@example.com/mcp?debug=1&api_key=arg-url-secret", "--endpoint=https://endpoint-user:endpoint-pass@example.com/mcp?password=endpoint-url-secret"]
+
+[mcp_servers.api-key-service.env]
+GITHUB_TOKEN = "secret-token"
+DEBUG = "1"
+
+[projects."/tmp/repo"]
+token = "codex-project-secret"
+`)
+	targetData := []byte(`
+api_key: lazy-top-secret
+base_url: https://lazy-user:lazy-pass@example.com/mcp?debug=1&secret=lazy-url-secret
+servers:
+  existing:
+    command: npx
+    args:
+      - --password=old-secret
+    env:
+      API_KEY: old-secret
+      DEBUG: "1"
+    namespace: existing
+`)
+	if err := os.WriteFile(source, sourceData, 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := os.WriteFile(target, targetData, 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   target,
+		SourcePath:   source,
+		Diff:         true,
+		UpdateClient: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	report := FormatPlan(plan)
+	for _, secret := range []string{"sk-secret", "sk-camel", "plain-key-secret", "token-secret", "secret-token", "old-secret", "codex-top-secret", "codex-project-secret", "lazy-top-secret", "codex-user", "codex-pass", "codex-url-secret", "arg-user", "arg-pass", "arg-url-secret", "endpoint-user", "endpoint-pass", "endpoint-url-secret", "lazy-user", "lazy-pass", "lazy-url-secret"} {
+		if strings.Contains(report, secret) {
+			t.Fatalf("diff leaked secret %q:\n%s", secret, report)
+		}
+	}
+	for _, want := range []string{"api-key-service", "command: npx", "--api-key=<redacted>", "--apiKey=<redacted>", "--key <redacted>", "--token <redacted>", "GITHUB_TOKEN", "<redacted>", "DEBUG", "<set>", "API_KEY: <redacted>", "api_key: <redacted>", "token = '<redacted>'"} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("diff missing redacted value %q:\n%s", want, report)
+		}
+	}
+}
+
+func TestRunCodexDiffOmitsUnchangedFiles(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	if err := os.WriteFile(source, []byte(`
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github"]
+`), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := os.WriteFile(target, []byte(`
+servers:
+  github:
+    command: npx
+    args:
+      - -y
+      - github
+    namespace: github
+    idle_timeout: 5m0s
+    request_timeout: 10m0s
+    tools: []
+`), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: target,
+		SourcePath: source,
+		Diff:       true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(plan.Diffs) != 0 {
+		t.Fatalf("diffs = %#v, want none", plan.Diffs)
+	}
+}
+
+func TestRunCodexDiffRejectsBlockedClientUpdate(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	if err := os.WriteFile(source, []byte(`
+[mcp_servers.local]
+command = "npx"
+args = ["-y", "local-mcp"]
+
+[mcp_servers.remote]
+type = "http"
+url = "https://example.com/mcp"
+`), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   target,
+		SourcePath:   source,
+		Diff:         true,
+		UpdateClient: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "updating the source client would remove unsupported Codex MCP servers") {
+		t.Fatalf("error = %v", err)
+	}
+	if len(plan.Diffs) != 0 {
+		t.Fatalf("diffs = %#v, want none", plan.Diffs)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("diff created target config")
+	}
+	gotCodex, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if strings.Contains(string(gotCodex), "[mcp_servers.lazymcp]") {
+		t.Fatalf("codex source was rewritten despite blocked remote server:\n%s", string(gotCodex))
+	}
+}
+
 func TestRunCodexExplainsMissingMCPServersTable(t *testing.T) {
 	tests := []struct {
 		name string

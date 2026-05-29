@@ -178,6 +178,12 @@ lazymcp migrate --dry-run
 
 `--write` を指定しない限り、プレビューがデフォルトです。意図を明示するために `--dry-run` も指定できます。
 
+移行で変更される lazymcp 設定と Codex 設定を、書き込まずに unified diff として確認できます。
+
+```bash
+lazymcp migrate --diff
+```
+
 インポートしたサーバーを lazymcp の設定に書き込みます。
 
 ```bash
@@ -203,7 +209,7 @@ Codex 側がすでに `lazymcp` プロキシだけを指している場合も、
 各テーブルには、文字列の `command`、任意の文字列配列 `args`、任意の文字列値テーブル `env` を指定できます。
 同じ Codex 設定ディレクトリの `.tmp/plugins/plugins/*/.mcp.json` も探索し、plugin が提供する stdio 形式の `mcpServers` もインポートします。
 `type: "http"` や `url` だけを持つ remote MCP、Codex App の connector として管理される remote tools は、ローカルプロセスとして遅延起動できないため skipped として表示します。
-Codex 設定ファイル内に unsupported な remote MCP が残っている場合、`--write` / `-y` はそれを削除しないように、lazymcp config の書き込みと Codex 登録の書き換えを行う前に停止します。
+Codex 設定ファイル内に unsupported な remote MCP が残っている場合、`--diff` / `--write` / `-y` はそれを削除しないように、lazymcp config の差分表示や書き込みと Codex 登録の書き換えを行う前に停止します。
 Codex App の tool cache に残っている connector も確認し、ローカル stdio command が無いため移行できない connector 名と tool 数を skipped に表示します。
 `[mcp_servers.<name>]` と import 可能な plugin MCP server がどちらも見つからない場合は、Codex App connectors/plugins が別管理の可能性があることを説明して停止します。
 移行前後には Codex と lazymcp の設定ファイルを再読み込みして検証し、形式や必須項目に問題がある場合はエラーを出して停止します。
@@ -213,7 +219,7 @@ Codex App の tool cache に残っている connector も確認し、ローカ�
 設定ファイルや cache が読めない場合も、可能な限り他の source の一覧を続け、読めなかった理由を warning として表示します。
 Codex config の場所を明示したい場合は `--codex-config /path/to/config.toml` を指定できます。
 
-ドライランのレポートでは、トークンやシークレットが出力されないように環境変数の値をマスクします。
+ドライランのレポート、`--diff`、`status` の表示では、トークンやシークレットが出力されないように環境変数、secret 系の引数、secret 系の設定キー、URL credential / secret 系 query をマスクします。
 インポートしたサーバーにはツールスキーマは含まれません。Codex の MCP 設定にはバックエンドの起動コマンドしか含まれていないためです。
 移行後の `lazymcp serve` は、`tools:` が空のバックエンドについて最初の `tools/list` でバックエンドからツール一覧を検出します。
 検出した一覧は現在の stdio セッション内で保持されます。ツールを完全に遅延起動したい場合や、起動できない環境でも一覧を表示したい場合は、`tools:` エントリを設定ファイルに追加してください。
