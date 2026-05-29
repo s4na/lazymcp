@@ -327,14 +327,10 @@ func statusReadWarning(path string, err error) string {
 func redactURL(raw string) string {
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return raw
+		return "<redacted-url>"
 	}
 	if parsed.User != nil {
-		if username := parsed.User.Username(); username != "" {
-			parsed.User = url.UserPassword(username, "<redacted>")
-		} else {
-			parsed.User = url.User("<redacted>")
-		}
+		parsed.User = url.User("<redacted>")
 	}
 	query := parsed.Query()
 	for key, values := range query {

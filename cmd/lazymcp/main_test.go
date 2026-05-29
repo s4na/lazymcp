@@ -180,7 +180,11 @@ args = ["-y", "github", "--api-key=secret"]
 
 [mcp_servers.remote]
 type = "http"
-url = "https://user:secret@example.com/mcp?api_key=secret&debug=1"
+url = "https://ghp_secret@example.com/mcp?api_key=secret&debug=1"
+
+[mcp_servers.malformed]
+type = "http"
+url = "http://example.com/%zz?token=secret"
 `), 0o600)
 	if err != nil {
 		t.Fatalf("write codex config: %v", err)
@@ -266,7 +270,8 @@ servers:
 		"importable",
 		"npx -y github --api-key=<redacted>",
 		"remote",
-		"https://user:%3Credacted%3E@example.com/mcp?api_key=%3Credacted%3E&debug=1",
+		"https://%3Credacted%3E@example.com/mcp?api_key=%3Credacted%3E&debug=1",
+		"<redacted-url>",
 		"Codex App (" + dir + ")",
 		"xcodebuildmcp",
 		"cloudflare-api",
