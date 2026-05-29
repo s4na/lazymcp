@@ -423,6 +423,10 @@ func redactLazyConfigData(data []byte) ([]byte, error) {
 }
 
 func redactConfigValue(key string, value any) any {
+	return redactConfigValueIn(key, "", value)
+}
+
+func redactConfigValueIn(key, parentKey string, value any) any {
 	if isSecretKey(key) {
 		return "<redacted>"
 	}
@@ -433,7 +437,11 @@ func redactConfigValue(key string, value any) any {
 		}
 		out := make(map[string]any, len(typed))
 		for childKey, childValue := range typed {
-			out[childKey] = redactConfigValue(childKey, childValue)
+			if isServerCollectionKey(key) {
+				out[childKey] = redactConfigValueIn("", key, childValue)
+			} else {
+				out[childKey] = redactConfigValueIn(childKey, key, childValue)
+			}
 		}
 		return out
 	case []any:
@@ -442,12 +450,16 @@ func redactConfigValue(key string, value any) any {
 		}
 		out := make([]any, 0, len(typed))
 		for _, item := range typed {
-			out = append(out, redactConfigValue("", item))
+			out = append(out, redactConfigValueIn("", parentKey, item))
 		}
 		return out
 	default:
 		return value
 	}
+}
+
+func isServerCollectionKey(key string) bool {
+	return strings.EqualFold(key, "servers") || strings.EqualFold(key, "mcp_servers")
 }
 
 func isSecretKey(key string) bool {
@@ -1007,8 +1019,8 @@ func maskArgs(args []string) []string {
 }
 
 func isSecretFlag(arg string) bool {
-	upper := strings.ToUpper(strings.TrimLeft(arg, "-"))
-	return strings.Contains(upper, "TOKEN") || strings.Contains(upper, "SECRET") || strings.Contains(upper, "PASSWORD") || strings.Contains(upper, "API-KEY") || strings.Contains(upper, "API_KEY")
+	key := strings.ReplaceAll(strings.TrimLeft(arg, "-"), "-", "_")
+	return isSecretKey(key)
 }
 
 func secretAssignment(arg string) bool {
