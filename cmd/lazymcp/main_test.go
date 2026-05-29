@@ -180,7 +180,7 @@ args = ["-y", "github", "--api-key=secret"]
 
 [mcp_servers.remote]
 type = "http"
-url = "https://example.com/mcp"
+url = "https://user:secret@example.com/mcp?api_key=secret&debug=1"
 `), 0o600)
 	if err != nil {
 		t.Fatalf("write codex config: %v", err)
@@ -198,7 +198,7 @@ url = "https://example.com/mcp"
     },
     "cloudflare-api": {
       "type": "http",
-      "url": "https://mcp.cloudflare.com/mcp"
+      "url": "https://mcp.cloudflare.com/mcp?token=secret"
     }
   }
 }
@@ -263,12 +263,14 @@ servers:
 	for _, want := range []string{
 		"Codex CLI (" + codexConfig + ")",
 		"github",
+		"importable",
 		"npx -y github --api-key=<redacted>",
 		"remote",
-		"https://example.com/mcp",
+		"https://user:%3Credacted%3E@example.com/mcp?api_key=%3Credacted%3E&debug=1",
 		"Codex App (" + dir + ")",
 		"xcodebuildmcp",
 		"cloudflare-api",
+		"https://mcp.cloudflare.com/mcp?token=%3Credacted%3E",
 		"GitHub",
 		"1 cached tools; no local stdio MCP command",
 		"Asana",

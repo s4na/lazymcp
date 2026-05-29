@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -283,7 +284,7 @@ func clientStatus(srv clientServer) string {
 	if srv.Type != "" && srv.Type != "stdio" {
 		return "not importable"
 	}
-	return "configured"
+	return "importable"
 }
 
 func pluginStatus(srv clientServer) string {
@@ -304,7 +305,7 @@ func clientDetails(srv clientServer) string {
 		return maskedClientCommandLine(srv)
 	}
 	if srv.URL != "" {
-		return srv.URL
+		return redactURL(srv.URL)
 	}
 	if srv.Type != "" {
 		return "remote transport without local command"
@@ -321,6 +322,31 @@ func statusReadWarning(path string, err error) string {
 		return fmt.Sprintf("%s: not found", path)
 	}
 	return err.Error()
+}
+
+func redactURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw
+	}
+	if parsed.User != nil {
+		if username := parsed.User.Username(); username != "" {
+			parsed.User = url.UserPassword(username, "<redacted>")
+		} else {
+			parsed.User = url.User("<redacted>")
+		}
+	}
+	query := parsed.Query()
+	for key, values := range query {
+		if isSecretFlag(key) {
+			for i := range values {
+				values[i] = "<redacted>"
+			}
+			query[key] = values
+		}
+	}
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func appToolConnectorKey(tool appToolCacheEntry) string {
