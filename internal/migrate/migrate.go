@@ -165,6 +165,10 @@ func diffClientProxy(source Source, sourcePath, configPath string) ([]FileDiff, 
 		if !changed {
 			return nil, nil
 		}
+		before, after, err = redactCodexDiffData(before, after)
+		if err != nil {
+			return nil, err
+		}
 		return []FileDiff{{Path: sourcePath, Diff: UnifiedDiff(sourcePath, sourcePath, before, after)}}, nil
 	default:
 		return nil, fmt.Errorf("unsupported source %q", source)
@@ -365,7 +369,134 @@ func diffConfig(path string, incoming map[string]config.Server, overwrite bool) 
 	if !changed {
 		return nil, nil
 	}
+	before, after, err = redactLazyDiffData(before, after)
+	if err != nil {
+		return nil, err
+	}
 	return []FileDiff{{Path: path, Diff: UnifiedDiff(path, path, before, after)}}, nil
+}
+
+func redactCodexDiffData(before, after []byte) ([]byte, []byte, error) {
+	redactedBefore, err := redactCodexConfigData(before)
+	if err != nil {
+		return nil, nil, err
+	}
+	redactedAfter, err := redactCodexConfigData(after)
+	if err != nil {
+		return nil, nil, err
+	}
+	return redactedBefore, redactedAfter, nil
+}
+
+func redactCodexConfigData(data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return data, nil
+	}
+	var raw map[string]any
+	if err := toml.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	serversValue, ok := raw["mcp_servers"]
+	if !ok {
+		return data, nil
+	}
+	servers, ok := serversValue.(map[string]any)
+	if !ok {
+		return data, nil
+	}
+	for _, value := range servers {
+		table, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if args, ok := table["args"]; ok {
+			table["args"] = maskAnyArgs(args)
+		}
+		if env, ok := table["env"]; ok {
+			table["env"] = maskAnyEnv(env)
+		}
+	}
+	return toml.Marshal(raw)
+}
+
+func redactLazyDiffData(before, after []byte) ([]byte, []byte, error) {
+	redactedBefore, err := redactLazyConfigData(before)
+	if err != nil {
+		return nil, nil, err
+	}
+	redactedAfter, err := redactLazyConfigData(after)
+	if err != nil {
+		return nil, nil, err
+	}
+	return redactedBefore, redactedAfter, nil
+}
+
+func redactLazyConfigData(data []byte) ([]byte, error) {
+	if len(data) == 0 {
+		return data, nil
+	}
+	var raw map[string]any
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	serversValue, ok := raw["servers"]
+	if !ok {
+		return data, nil
+	}
+	servers, ok := serversValue.(map[string]any)
+	if !ok {
+		return data, nil
+	}
+	for _, value := range servers {
+		table, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
+		if args, ok := table["args"]; ok {
+			table["args"] = maskAnyArgs(args)
+		}
+		if env, ok := table["env"]; ok {
+			table["env"] = maskAnyEnv(env)
+		}
+	}
+	return yaml.Marshal(raw)
+}
+
+func maskAnyArgs(value any) any {
+	args, err := stringSlice(value)
+	if err != nil {
+		return value
+	}
+	masked := maskArgs(args)
+	out := make([]any, 0, len(masked))
+	for _, arg := range masked {
+		out = append(out, arg)
+	}
+	return out
+}
+
+func maskAnyEnv(value any) any {
+	env, err := stringMap(value)
+	if err != nil {
+		return value
+	}
+	masked := maskEnv(env)
+	out := make(map[string]any, len(masked))
+	for key, value := range masked {
+		out[key] = value
+	}
+	return out
+}
+
+func maskEnv(env map[string]string) map[string]string {
+	if len(env) == 0 {
+		return env
+	}
+	out := make(map[string]string, len(env))
+	for key, value := range env {
+		out[key] = maskSecret(key, value)
+	}
+	return out
 }
 
 func configData(path string, incoming map[string]config.Server, overwrite bool) ([]byte, []byte, bool, error) {

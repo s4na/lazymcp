@@ -149,6 +149,61 @@ servers:
 	}
 }
 
+func TestRunCodexDiffMasksSecrets(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	sourceData := []byte(`
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github", "--api-key=sk-secret", "--token", "token-secret"]
+
+[mcp_servers.github.env]
+GITHUB_TOKEN = "secret-token"
+DEBUG = "1"
+`)
+	targetData := []byte(`
+servers:
+  existing:
+    command: npx
+    args:
+      - --password=old-secret
+    env:
+      API_KEY: old-secret
+      DEBUG: "1"
+    namespace: existing
+`)
+	if err := os.WriteFile(source, sourceData, 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := os.WriteFile(target, targetData, 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   target,
+		SourcePath:   source,
+		Diff:         true,
+		UpdateClient: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	report := FormatPlan(plan)
+	for _, secret := range []string{"sk-secret", "token-secret", "secret-token", "old-secret"} {
+		if strings.Contains(report, secret) {
+			t.Fatalf("diff leaked secret %q:\n%s", secret, report)
+		}
+	}
+	for _, want := range []string{"--api-key=<redacted>", "--token <redacted>", "GITHUB_TOKEN", "<redacted>", "DEBUG", "<set>", "API_KEY: <redacted>"} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("diff missing redacted value %q:\n%s", want, report)
+		}
+	}
+}
+
 func TestRunCodexDiffOmitsUnchangedFiles(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")
