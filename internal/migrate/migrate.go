@@ -44,6 +44,7 @@ type Plan struct {
 
 type clientConfig struct {
 	MCPServers map[string]clientServer
+	Skipped    []string
 }
 
 type clientServer struct {
@@ -229,7 +230,7 @@ func discoverCodex(opts Options) (map[string]config.Server, []string, []string, 
 	}
 	mcpServers := raw.MCPServers
 	sourceFiles := []string{path}
-	skipped := []string{}
+	skipped := append([]string(nil), raw.Skipped...)
 	pluginServers, pluginFiles, pluginSkipped, err := readCodexPluginMCPManifests(filepath.Dir(path), mcpServers)
 	if err != nil {
 		return nil, nil, nil, err
@@ -341,6 +342,9 @@ func readCodexAppToolCacheSkips(codexDir string) ([]string, []string, error) {
 		for _, tool := range cache.Tools {
 			key := tool.ConnectorID
 			if key == "" {
+				key = tool.Tool.Meta.ConnectorID
+			}
+			if key == "" {
 				key = tool.ServerName
 			}
 			if key == "" {
@@ -349,14 +353,25 @@ func readCodexAppToolCacheSkips(codexDir string) ([]string, []string, error) {
 			if key == "" {
 				continue
 			}
+			toolName := tool.ToolName
+			if toolName == "" {
+				toolName = tool.Tool.Name
+			}
+			toolKey := key + "\x00" + toolName
 			summary := connectors[key]
 			if summary.Name == "" {
 				summary.Name = tool.ConnectorName
 			}
 			if summary.Name == "" {
+				summary.Name = tool.Tool.Meta.ConnectorName
+			}
+			if summary.Name == "" {
 				summary.Name = tool.ServerName
 			}
-			summary.ToolCount++
+			if summary.Tools == nil {
+				summary.Tools = map[string]struct{}{}
+			}
+			summary.Tools[toolKey] = struct{}{}
 			connectors[key] = summary
 		}
 	}
@@ -366,7 +381,7 @@ func readCodexAppToolCacheSkips(codexDir string) ([]string, []string, error) {
 		if name == "" {
 			name = id
 		}
-		skipped = append(skipped, fmt.Sprintf("%s: Codex App connector cache has %d tools but no local stdio MCP command to import", name, summary.ToolCount))
+		skipped = append(skipped, fmt.Sprintf("%s: Codex App connector cache has %d tools but no local stdio MCP command to import", name, len(summary.Tools)))
 	}
 	sort.Strings(skipped)
 	return sourceFiles, skipped, nil
@@ -378,13 +393,21 @@ type appToolsCache struct {
 
 type appToolCacheEntry struct {
 	ServerName    string `json:"server_name"`
+	ToolName      string `json:"tool_name"`
 	ConnectorID   string `json:"connector_id"`
 	ConnectorName string `json:"connector_name"`
+	Tool          struct {
+		Name string `json:"name"`
+		Meta struct {
+			ConnectorID   string `json:"connector_id"`
+			ConnectorName string `json:"connector_name"`
+		} `json:"_meta"`
+	} `json:"tool"`
 }
 
 type appConnectorSummary struct {
-	Name      string
-	ToolCount int
+	Name  string
+	Tools map[string]struct{}
 }
 
 func readAppToolsCache(path string) (*appToolsCache, error) {
@@ -405,6 +428,18 @@ func convert(servers map[string]clientServer) (map[string]config.Server, []strin
 	for name, srv := range servers {
 		if isLazyMCPProxy(srv) {
 			skipped = append(skipped, fmt.Sprintf("%s: already points to lazymcp", name))
+			continue
+		}
+		if srv.Command == "" {
+			if srv.Type != "" || srv.URL != "" {
+				skipped = append(skipped, fmt.Sprintf("%s: Codex MCP server uses unsupported remote transport", name))
+				continue
+			}
+			skipped = append(skipped, fmt.Sprintf("%s: Codex MCP server has no command", name))
+			continue
+		}
+		if srv.Type != "" && srv.Type != "stdio" {
+			skipped = append(skipped, fmt.Sprintf("%s: Codex MCP server uses unsupported %q transport", name, srv.Type))
 			continue
 		}
 		out[name] = config.Server{
@@ -709,8 +744,25 @@ func readCodexConfig(path string) (*clientConfig, error) {
 
 func parseCodexServer(path, name string, table map[string]any) (clientServer, error) {
 	var srv clientServer
+	if serverType, ok := table["type"]; ok {
+		serverTypeString, ok := serverType.(string)
+		if !ok {
+			return srv, fmt.Errorf("validate %s: [mcp_servers.%s].type must be a string", path, name)
+		}
+		srv.Type = serverTypeString
+	}
+	if url, ok := table["url"]; ok {
+		urlString, ok := url.(string)
+		if !ok {
+			return srv, fmt.Errorf("validate %s: [mcp_servers.%s].url must be a string", path, name)
+		}
+		srv.URL = urlString
+	}
 	command, ok := table["command"]
 	if !ok {
+		if srv.Type != "" || srv.URL != "" {
+			return srv, nil
+		}
 		return srv, fmt.Errorf("validate %s: [mcp_servers.%s].command is required", path, name)
 	}
 	commandString, ok := command.(string)

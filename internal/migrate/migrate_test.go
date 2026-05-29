@@ -138,6 +138,14 @@ func TestRunCodexImportsPluginMCPManifestServers(t *testing.T) {
 	source := filepath.Join(dir, "config.toml")
 	target := filepath.Join(dir, "lazymcp.yaml")
 	err := os.WriteFile(source, []byte(`
+[mcp_servers.local]
+command = "npx"
+args = ["-y", "local-mcp"]
+
+[mcp_servers.remote]
+type = "http"
+url = "https://example.com/mcp"
+
 [projects."/tmp/repo"]
 trust_level = "trusted"
 `), 0o600)
@@ -180,9 +188,20 @@ trust_level = "trusted"
   "tools": [
     {
       "server_name": "codex_apps",
+      "tool_name": "search",
+      "tool": {
+        "name": "github_search",
+        "_meta": {
+          "connector_id": "connector_github",
+          "connector_name": "GitHub"
+        }
+      }
+    },
+    {
+      "server_name": "codex_apps",
       "connector_id": "connector_github",
       "connector_name": "GitHub",
-      "tool_name": "search"
+      "tool_name": "get_issue"
     },
     {
       "server_name": "codex_apps",
@@ -216,18 +235,20 @@ trust_level = "trusted"
 	if _, ok := plan.Servers["xcodebuildmcp"]; !ok {
 		t.Fatalf("servers = %#v, want xcodebuildmcp", plan.Servers)
 	}
+	if _, ok := plan.Servers["local"]; !ok {
+		t.Fatalf("servers = %#v, want local Codex MCP", plan.Servers)
+	}
 	if got := plan.Servers["xcodebuildmcp"].Env["XCODEBUILDMCP_ENABLED_WORKFLOWS"]; got != "simulator,ui-automation" {
 		t.Fatalf("env = %q", got)
 	}
 	if !containsString(plan.SourceFiles, source) || !containsString(plan.SourceFiles, manifest) || !containsString(plan.SourceFiles, appCache) {
 		t.Fatalf("source files = %#v, want config, manifest, and app cache", plan.SourceFiles)
 	}
-	if !containsString(plan.Skipped, "cloudflare-api: plugin MCP manifest uses unsupported remote transport") {
-		t.Fatalf("skipped = %#v", plan.Skipped)
-	}
 	for _, want := range []string{
 		"Asana: Codex App connector cache has 1 tools but no local stdio MCP command to import",
 		"GitHub: Codex App connector cache has 2 tools but no local stdio MCP command to import",
+		"cloudflare-api: plugin MCP manifest uses unsupported remote transport",
+		"remote: Codex MCP server uses unsupported remote transport",
 	} {
 		if !containsString(plan.Skipped, want) {
 			t.Fatalf("skipped = %#v, want %q", plan.Skipped, want)

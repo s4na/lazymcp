@@ -43,7 +43,7 @@ lazymcp migrate -y
 Codex から移行した直後のように `tools:` が空のバックエンドは、クライアントからの最初の `tools/list` で起動してツール一覧を検出し、そのセッション内でキャッシュします。
 `lazymcp serve` は `~/tmp/lazymcp/lazymcp.log` に起動時の診断ログとバックエンド stderr を追記します。`~/tmp` がない環境では、起動時に `~/tmp/lazymcp` を作成します。
 
-`lazymcp migrate` は Codex の `~/.codex/config.toml` を読み取り、直接登録されている各 `[mcp_servers.<name>]` エントリを `~/.config/lazymcp/config.yaml` に移します。
+`lazymcp migrate` は Codex の `~/.codex/config.toml` と plugin の `.mcp.json` を読み取り、直接登録されている各 `[mcp_servers.<name>]` エントリと import 可能な stdio plugin MCP server を `~/.config/lazymcp/config.yaml` に移します。
 既存ファイルを置き換える前には、タイムスタンプ付きのバックアップを作成します。
 変換後の Codex MCP 設定には次のエントリだけが残ります。
 
