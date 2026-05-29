@@ -2,6 +2,16 @@
 
 `lazymcp` は、必要になったときだけバックエンドの MCP サーバーを起動する、軽量な MCP プロキシ / ルーターです。
 
+## 目的
+
+`lazymcp` の主な目的は、Codex のセッションごとに重いローカル stdio MCP サーバーが常駐し、合計メモリ使用量が増えることを避けることです。
+
+Codex には `lazymcp` だけを MCP サーバーとして登録し、実際のバックエンド MCP サーバーは最初に必要になったときだけ起動します。
+使われていないバックエンドは `idle_timeout` 後に停止するため、Node.js や Python などで実装された重い stdio MCP サーバーを、各セッションで常に起動したままにする必要がなくなります。
+
+対象になるのは、`command` と `args` で起動できるローカル stdio MCP サーバーです。
+Codex App の remote connector や remote HTTP MCP はローカルプロセスとして起動・停止できないため、`lazymcp` の遅延起動やアイドル停止によるメモリ削減の対象外です。
+
 ## インストール
 
 ```bash
@@ -149,6 +159,7 @@ command: "uv run python -m my_mcp_server"
 `tools:` が設定されているバックエンドは、対応する最初のツール呼び出しで遅延起動されます。
 `tools:` が空のバックエンドは、現在のセッションで最初に受け取る `tools/list` で一度だけツール検出を試みます。
 `idle_timeout` によってバックエンドが停止していた場合、後続のツール呼び出しでは、リクエストを転送する前に新しいバックエンドプロセスを起動します。
+これにより、使われていないバックエンド MCP プロセスの常駐メモリを解放できます。
 バックエンドが保持する状態はメモリ上だけの場合があります。そのため、アイドル停止、クラッシュ、リクエストタイムアウト、セッション終了の後は、前回のプロセスの状態が失われることがあります。
 永続化が必要な状態は、バックエンドサーバー自身で管理してください。
 
@@ -209,6 +220,7 @@ Codex 側がすでに `lazymcp` プロキシだけを指している場合も、
 各テーブルには、文字列の `command`、任意の文字列配列 `args`、任意の文字列値テーブル `env` を指定できます。
 同じ Codex 設定ディレクトリの `.tmp/plugins/plugins/*/.mcp.json` も探索し、plugin が提供する stdio 形式の `mcpServers` もインポートします。
 `type: "http"` や `url` だけを持つ remote MCP、Codex App の connector として管理される remote tools は、ローカルプロセスとして遅延起動できないため skipped として表示します。
+これらの remote connector / remote MCP は、Codex App 側で管理されるため、`lazymcp` に移行してもセッションごとのメモリ使用量を直接削減する対象にはなりません。
 Codex 設定ファイル内に unsupported な remote MCP が残っている場合、`--diff` / `--write` / `-y` はそれを削除しないように、lazymcp config の差分表示や書き込みと Codex 登録の書き換えを行う前に停止します。
 Codex App の tool cache に残っている connector も確認し、ローカル stdio command が無いため移行できない connector 名と tool 数を skipped に表示します。
 `[mcp_servers.<name>]` と import 可能な plugin MCP server がどちらも見つからない場合は、Codex App connectors/plugins が別管理の可能性があることを説明して停止します。
