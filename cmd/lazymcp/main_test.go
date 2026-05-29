@@ -169,6 +169,151 @@ func TestMigrateCommandHidesSourceSelection(t *testing.T) {
 	}
 }
 
+func TestStatusShowsCodexCLIAppAndLazyMCPSettings(t *testing.T) {
+	dir := t.TempDir()
+	codexConfig := filepath.Join(dir, "config.toml")
+	lazyConfig := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(codexConfig, []byte(`
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "github", "--api-key=secret"]
+
+[mcp_servers.remote]
+type = "http"
+url = "https://example.com/mcp"
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write codex config: %v", err)
+	}
+	pluginDir := filepath.Join(dir, ".tmp", "plugins", "plugins", "build-ios-apps")
+	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+	err = os.WriteFile(filepath.Join(pluginDir, ".mcp.json"), []byte(`
+{
+  "mcpServers": {
+    "xcodebuildmcp": {
+      "command": "npx",
+      "args": ["-y", "xcodebuildmcp@latest", "mcp"]
+    },
+    "cloudflare-api": {
+      "type": "http",
+      "url": "https://mcp.cloudflare.com/mcp"
+    }
+  }
+}
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write plugin manifest: %v", err)
+	}
+	cacheDir := filepath.Join(dir, "cache", "codex_apps_tools")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatalf("mkdir app cache dir: %v", err)
+	}
+	err = os.WriteFile(filepath.Join(cacheDir, "tools.json"), []byte(`
+{
+  "tools": [
+    {
+      "server_name": "codex_apps",
+      "connector_name": "GitHub",
+      "tool_name": "search"
+    },
+    {
+      "server_name": "codex_apps",
+      "connector_name": "GitHub",
+      "tool_name": "search"
+    },
+    {
+      "server_name": "codex_apps",
+      "connector_name": "Asana",
+      "tool_name": "list_tasks"
+    }
+  ]
+}
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write app cache: %v", err)
+	}
+	err = os.WriteFile(lazyConfig, []byte(`
+servers:
+  filesystem:
+    command: npx
+    args:
+      - -y
+      - filesystem
+    namespace: fs
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write lazy config: %v", err)
+	}
+
+	cmd := newRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"--config", lazyConfig,
+		"status", "--codex-config", codexConfig,
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"Codex CLI (" + codexConfig + ")",
+		"github",
+		"npx -y github --api-key=<redacted>",
+		"remote",
+		"https://example.com/mcp",
+		"Codex App (" + dir + ")",
+		"xcodebuildmcp",
+		"cloudflare-api",
+		"GitHub",
+		"1 cached tools; no local stdio MCP command",
+		"Asana",
+		"lazymcp (" + lazyConfig + ")",
+		"filesystem",
+		"namespace=fs command=npx -y filesystem",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("status output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "secret") {
+		t.Fatalf("status output leaked secret:\n%s", got)
+	}
+}
+
+func TestStatusReportsMissingFilesWithoutFailing(t *testing.T) {
+	dir := t.TempDir()
+	cmd := newRootCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"--config", filepath.Join(dir, "missing-lazymcp.yaml"),
+		"status", "--codex-config", filepath.Join(dir, "missing-codex.toml"),
+	})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"Codex CLI",
+		"warnings:",
+		"missing-codex.toml: not found",
+		"Codex App",
+		"lazymcp",
+		"missing-lazymcp.yaml: not found",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("status output missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestMigrateCodexRejectsDryRunWithWrite(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")

@@ -361,36 +361,15 @@ func readCodexAppToolCacheSkips(codexDir string) ([]string, []string, error) {
 		}
 		sourceFiles = append(sourceFiles, path)
 		for _, tool := range cache.Tools {
-			key := tool.ConnectorID
-			if key == "" {
-				key = tool.Tool.Meta.ConnectorID
-			}
-			if key == "" {
-				key = tool.ConnectorName
-			}
-			if key == "" {
-				key = tool.Tool.Meta.ConnectorName
-			}
-			if key == "" {
-				key = tool.ServerName
-			}
+			key := appToolConnectorKey(tool)
 			if key == "" {
 				continue
 			}
-			toolName := tool.ToolName
-			if toolName == "" {
-				toolName = tool.Tool.Name
-			}
+			toolName := appToolName(tool)
 			toolKey := key + "\x00" + toolName
 			summary := connectors[key]
 			if summary.Name == "" {
-				summary.Name = tool.ConnectorName
-			}
-			if summary.Name == "" {
-				summary.Name = tool.Tool.Meta.ConnectorName
-			}
-			if summary.Name == "" {
-				summary.Name = tool.ServerName
+				summary.Name = appToolConnectorName(tool)
 			}
 			if summary.Tools == nil {
 				summary.Tools = map[string]struct{}{}
