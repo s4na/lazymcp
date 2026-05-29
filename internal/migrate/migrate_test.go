@@ -492,6 +492,103 @@ trust_level = "trusted"
 	}
 }
 
+func TestRunCodexPreservesBundledMCPServersWhenUpdatingClient(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.node_repl]
+command = "/Applications/Codex.app/Contents/Resources/node_repl"
+args = []
+startup_timeout_sec = 120
+
+[mcp_servers.node_repl.env]
+CODEX_CLI_PATH = "/Applications/Codex.app/Contents/Resources/codex"
+NODE_REPL_NODE_PATH = "/Applications/Codex.app/Contents/Resources/node"
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	pluginDir := filepath.Join(dir, ".tmp", "plugins", "plugins", "build-ios-apps")
+	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+	manifest := filepath.Join(pluginDir, ".mcp.json")
+	err = os.WriteFile(manifest, []byte(`
+{
+  "mcpServers": {
+    "xcodebuildmcp": {
+      "command": "npx",
+      "args": ["-y", "xcodebuildmcp@latest", "mcp"]
+    }
+  }
+}
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write plugin manifest: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   target,
+		SourcePath:   source,
+		Write:        true,
+		UpdateClient: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if _, ok := plan.Servers["xcodebuildmcp"]; !ok {
+		t.Fatalf("servers = %#v, want xcodebuildmcp", plan.Servers)
+	}
+	if _, ok := plan.Servers["node_repl"]; ok {
+		t.Fatalf("servers = %#v, want bundled node_repl skipped", plan.Servers)
+	}
+	if !containsString(plan.Skipped, "node_repl: Codex bundled MCP server is preserved in Codex config and not migrated by default") {
+		t.Fatalf("skipped = %#v", plan.Skipped)
+	}
+
+	lazyData, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if strings.Contains(string(lazyData), "node_repl") {
+		t.Fatalf("target imported bundled MCP server:\n%s", string(lazyData))
+	}
+	if !strings.Contains(string(lazyData), "xcodebuildmcp") {
+		t.Fatalf("target missing plugin MCP server:\n%s", string(lazyData))
+	}
+
+	codexData, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	for _, want := range []string{
+		"[mcp_servers.lazymcp]",
+		"[mcp_servers.node_repl]",
+		"startup_timeout_sec = 120",
+		"NODE_REPL_NODE_PATH",
+	} {
+		if !strings.Contains(string(codexData), want) {
+			t.Fatalf("source missing %q after rewrite:\n%s", want, string(codexData))
+		}
+	}
+
+	plan, err = Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   target,
+		SourcePath:   source,
+		Write:        true,
+		UpdateClient: true,
+	})
+	if err != nil {
+		t.Fatalf("second run: %v", err)
+	}
+	if len(plan.ChangedFiles) != 0 {
+		t.Fatalf("second run changed files = %#v, want none", plan.ChangedFiles)
+	}
+}
+
 func TestRunCodexReportsMalformedAppToolCacheWithoutBlockingImport(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")

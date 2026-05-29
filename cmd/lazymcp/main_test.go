@@ -178,6 +178,13 @@ func TestStatusShowsCodexCLIAppAndLazyMCPSettings(t *testing.T) {
 command = "npx"
 args = ["-y", "github", "--key=secret", "--apikey=secret", "--apiKey=secret", "--access-key", "secret", "--api-key=secret"]
 
+[mcp_servers.node_repl]
+command = "/Applications/Codex.app/Contents/Resources/node_repl"
+args = []
+
+[mcp_servers.node_repl.env]
+NODE_REPL_NODE_PATH = "/Applications/Codex.app/Contents/Resources/node"
+
 [mcp_servers.remote]
 type = "http"
 url = "https://ghp_secret@example.com/mcp?key=secret&apikey=secret&apiKey=secret&access_key=secret&api_key=secret&debug=1"
@@ -269,6 +276,9 @@ servers:
 		"github",
 		"importable",
 		"npx -y github --key=<redacted> --apikey=<redacted> --apiKey=<redacted> --access-key <redacted> --api-key=<redacted>",
+		"node_repl",
+		"preserved",
+		"/Applications/Codex.app/Contents/Resources/node_repl",
 		"remote",
 		"https://%3Credacted%3E@example.com/mcp?access_key=%3Credacted%3E&apiKey=%3Credacted%3E&api_key=%3Credacted%3E&apikey=%3Credacted%3E&debug=1&key=%3Credacted%3E",
 		"<redacted-url>",
