@@ -396,27 +396,7 @@ func redactCodexConfigData(data []byte) ([]byte, error) {
 	if err := toml.Unmarshal(data, &raw); err != nil {
 		return nil, err
 	}
-	serversValue, ok := raw["mcp_servers"]
-	if !ok {
-		return data, nil
-	}
-	servers, ok := serversValue.(map[string]any)
-	if !ok {
-		return data, nil
-	}
-	for _, value := range servers {
-		table, ok := value.(map[string]any)
-		if !ok {
-			continue
-		}
-		if args, ok := table["args"]; ok {
-			table["args"] = maskAnyArgs(args)
-		}
-		if env, ok := table["env"]; ok {
-			table["env"] = maskAnyEnv(env)
-		}
-	}
-	return toml.Marshal(raw)
+	return toml.Marshal(redactConfigValue("", raw))
 }
 
 func redactLazyDiffData(before, after []byte) ([]byte, []byte, error) {
@@ -439,27 +419,43 @@ func redactLazyConfigData(data []byte) ([]byte, error) {
 	if err := yaml.Unmarshal(data, &raw); err != nil {
 		return nil, err
 	}
-	serversValue, ok := raw["servers"]
-	if !ok {
-		return data, nil
+	return yaml.Marshal(redactConfigValue("", raw))
+}
+
+func redactConfigValue(key string, value any) any {
+	if isSecretKey(key) {
+		return "<redacted>"
 	}
-	servers, ok := serversValue.(map[string]any)
-	if !ok {
-		return data, nil
+	switch typed := value.(type) {
+	case map[string]any:
+		if strings.EqualFold(key, "env") {
+			return maskAnyEnv(typed)
+		}
+		out := make(map[string]any, len(typed))
+		for childKey, childValue := range typed {
+			out[childKey] = redactConfigValue(childKey, childValue)
+		}
+		return out
+	case []any:
+		if strings.EqualFold(key, "args") {
+			return maskAnyArgs(typed)
+		}
+		out := make([]any, 0, len(typed))
+		for _, item := range typed {
+			out = append(out, redactConfigValue("", item))
+		}
+		return out
+	default:
+		return value
 	}
-	for _, value := range servers {
-		table, ok := value.(map[string]any)
-		if !ok {
-			continue
-		}
-		if args, ok := table["args"]; ok {
-			table["args"] = maskAnyArgs(args)
-		}
-		if env, ok := table["env"]; ok {
-			table["env"] = maskAnyEnv(env)
-		}
-	}
-	return yaml.Marshal(raw)
+}
+
+func isSecretKey(key string) bool {
+	upper := strings.ToUpper(key)
+	return strings.Contains(upper, "TOKEN") ||
+		strings.Contains(upper, "SECRET") ||
+		strings.Contains(upper, "KEY") ||
+		strings.Contains(upper, "PASSWORD")
 }
 
 func maskAnyArgs(value any) any {

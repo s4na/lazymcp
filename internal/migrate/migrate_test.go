@@ -154,6 +154,8 @@ func TestRunCodexDiffMasksSecrets(t *testing.T) {
 	source := filepath.Join(dir, "config.toml")
 	target := filepath.Join(dir, "lazymcp.yaml")
 	sourceData := []byte(`
+api_key = "codex-top-secret"
+
 [mcp_servers.github]
 command = "npx"
 args = ["-y", "github", "--api-key=sk-secret", "--token", "token-secret"]
@@ -161,8 +163,12 @@ args = ["-y", "github", "--api-key=sk-secret", "--token", "token-secret"]
 [mcp_servers.github.env]
 GITHUB_TOKEN = "secret-token"
 DEBUG = "1"
+
+[projects."/tmp/repo"]
+token = "codex-project-secret"
 `)
 	targetData := []byte(`
+api_key: lazy-top-secret
 servers:
   existing:
     command: npx
@@ -192,12 +198,12 @@ servers:
 	}
 
 	report := FormatPlan(plan)
-	for _, secret := range []string{"sk-secret", "token-secret", "secret-token", "old-secret"} {
+	for _, secret := range []string{"sk-secret", "token-secret", "secret-token", "old-secret", "codex-top-secret", "codex-project-secret", "lazy-top-secret"} {
 		if strings.Contains(report, secret) {
 			t.Fatalf("diff leaked secret %q:\n%s", secret, report)
 		}
 	}
-	for _, want := range []string{"--api-key=<redacted>", "--token <redacted>", "GITHUB_TOKEN", "<redacted>", "DEBUG", "<set>", "API_KEY: <redacted>"} {
+	for _, want := range []string{"--api-key=<redacted>", "--token <redacted>", "GITHUB_TOKEN", "<redacted>", "DEBUG", "<set>", "API_KEY: <redacted>", "api_key: <redacted>", "token = '<redacted>'"} {
 		if !strings.Contains(report, want) {
 			t.Fatalf("diff missing redacted value %q:\n%s", want, report)
 		}
