@@ -180,7 +180,7 @@ args = ["-y", "github", "--api-key=secret"]
 
 [mcp_servers.remote]
 type = "http"
-url = "https://ghp_secret@example.com/mcp?api_key=secret&debug=1"
+url = "https://ghp_secret@example.com/mcp?key=secret&apikey=secret&apiKey=secret&access_key=secret&api_key=secret&debug=1"
 
 [mcp_servers.malformed]
 type = "http"
@@ -270,7 +270,7 @@ servers:
 		"importable",
 		"npx -y github --api-key=<redacted>",
 		"remote",
-		"https://%3Credacted%3E@example.com/mcp?api_key=%3Credacted%3E&debug=1",
+		"https://%3Credacted%3E@example.com/mcp?access_key=%3Credacted%3E&apiKey=%3Credacted%3E&api_key=%3Credacted%3E&apikey=%3Credacted%3E&debug=1&key=%3Credacted%3E",
 		"<redacted-url>",
 		"Codex App (" + dir + ")",
 		"xcodebuildmcp",

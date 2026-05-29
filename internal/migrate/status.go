@@ -334,7 +334,7 @@ func redactURL(raw string) string {
 	}
 	query := parsed.Query()
 	for key, values := range query {
-		if isSecretFlag(key) {
+		if isSecretURLQueryKey(key) {
 			for i := range values {
 				values[i] = "<redacted>"
 			}
@@ -343,6 +343,16 @@ func redactURL(raw string) string {
 	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String()
+}
+
+func isSecretURLQueryKey(key string) bool {
+	normalized := strings.ToUpper(strings.NewReplacer("-", "", "_", "").Replace(key))
+	return normalized == "KEY" ||
+		strings.Contains(normalized, "TOKEN") ||
+		strings.Contains(normalized, "SECRET") ||
+		strings.Contains(normalized, "PASSWORD") ||
+		strings.Contains(normalized, "APIKEY") ||
+		strings.Contains(normalized, "ACCESSKEY")
 }
 
 func appToolConnectorKey(tool appToolCacheEntry) string {
