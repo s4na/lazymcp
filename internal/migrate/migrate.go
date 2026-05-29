@@ -90,6 +90,9 @@ func Run(opts Options) (*Plan, error) {
 	if len(conflicts) > 0 {
 		return plan, fmt.Errorf("migration has conflicts: %s", strings.Join(conflicts, "; "))
 	}
+	if opts.UpdateClient && len(plan.Blocked) > 0 {
+		return plan, fmt.Errorf("updating the source client would remove unsupported Codex MCP servers: %s", strings.Join(plan.Blocked, "; "))
+	}
 	if opts.Write {
 		changed, backups, err := writeConfig(opts.ConfigPath, servers, opts.Overwrite)
 		if err != nil {
@@ -107,9 +110,6 @@ func Run(opts Options) (*Plan, error) {
 		}
 		if len(sourceFiles) == 0 {
 			return plan, fmt.Errorf("no source client config path discovered")
-		}
-		if len(plan.Blocked) > 0 {
-			return plan, fmt.Errorf("updating the source client would remove unsupported Codex MCP servers: %s", strings.Join(plan.Blocked, "; "))
 		}
 		changed, backups, err := writeClientProxy(opts.Source, sourceFiles[0], opts.ConfigPath)
 		if err != nil {
@@ -351,10 +351,13 @@ func readCodexAppToolCacheSkips(codexDir string) ([]string, []string, error) {
 	sort.Strings(paths)
 	connectors := map[string]appConnectorSummary{}
 	var sourceFiles []string
+	var skipped []string
 	for _, path := range paths {
 		cache, err := readAppToolsCache(path)
 		if err != nil {
-			return nil, nil, err
+			sourceFiles = append(sourceFiles, path)
+			skipped = append(skipped, fmt.Sprintf("%s: Codex App tool cache could not be read for skipped connector diagnostics: %v", path, err))
+			continue
 		}
 		sourceFiles = append(sourceFiles, path)
 		for _, tool := range cache.Tools {
@@ -393,7 +396,6 @@ func readCodexAppToolCacheSkips(codexDir string) ([]string, []string, error) {
 			connectors[key] = summary
 		}
 	}
-	var skipped []string
 	for id, summary := range connectors {
 		name := summary.Name
 		if name == "" {

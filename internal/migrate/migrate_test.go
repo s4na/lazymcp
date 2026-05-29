@@ -257,15 +257,8 @@ trust_level = "trusted"
 	if !containsString(plan.Blocked, "remote: Codex MCP server uses unsupported remote transport") {
 		t.Fatalf("blocked = %#v", plan.Blocked)
 	}
-	cfg, err := readLazyConfig(target)
-	if err != nil {
-		t.Fatalf("read target: %v", err)
-	}
-	if _, ok := cfg.Servers["xcodebuildmcp"]; !ok {
-		t.Fatalf("target servers = %#v, want xcodebuildmcp", cfg.Servers)
-	}
-	if _, ok := cfg.Servers["local"]; !ok {
-		t.Fatalf("target servers = %#v, want local", cfg.Servers)
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("target config was created despite blocked source client update")
 	}
 	gotCodex, err := os.ReadFile(source)
 	if err != nil {
@@ -273,6 +266,46 @@ trust_level = "trusted"
 	}
 	if strings.Contains(string(gotCodex), "[mcp_servers.lazymcp]") {
 		t.Fatalf("codex source was rewritten despite blocked remote server:\n%s", string(gotCodex))
+	}
+}
+
+func TestRunCodexReportsMalformedAppToolCacheWithoutBlockingImport(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.local]
+command = "npx"
+args = ["-y", "local-mcp"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	cacheDir := filepath.Join(dir, "cache", "codex_apps_tools")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatalf("mkdir app tool cache dir: %v", err)
+	}
+	badCache := filepath.Join(cacheDir, "broken.json")
+	if err := os.WriteFile(badCache, []byte(`{"tools": [`), 0o600); err != nil {
+		t.Fatalf("write bad app tool cache: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: filepath.Join(dir, "lazymcp.yaml"),
+		SourcePath: source,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if _, ok := plan.Servers["local"]; !ok {
+		t.Fatalf("servers = %#v, want local", plan.Servers)
+	}
+	if !containsString(plan.SourceFiles, badCache) {
+		t.Fatalf("source files = %#v, want bad app cache", plan.SourceFiles)
+	}
+	want := badCache + ": Codex App tool cache could not be read for skipped connector diagnostics"
+	if !containsSubstring(plan.Skipped, want) {
+		t.Fatalf("skipped = %#v, want substring %q", plan.Skipped, want)
 	}
 }
 
@@ -1243,6 +1276,15 @@ servers:
 func containsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSubstring(values []string, want string) bool {
+	for _, value := range values {
+		if strings.Contains(value, want) {
 			return true
 		}
 	}
