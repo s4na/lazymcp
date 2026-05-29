@@ -219,7 +219,7 @@ func discoverCodex(opts Options) (map[string]config.Server, []string, []string, 
 		if len(skipped) > 0 {
 			return servers, []string{path}, skipped, nil
 		}
-		return nil, nil, skipped, errors.New("no Codex MCP servers to import")
+		return nil, []string{path}, skipped, fmt.Errorf("no direct Codex MCP servers to import from %s; lazymcp currently imports only [mcp_servers.*] entries from Codex config.toml", path)
 	}
 	return servers, []string{path}, skipped, nil
 }
@@ -508,14 +508,11 @@ func readCodexConfig(path string) (*clientConfig, error) {
 	}
 	serversValue, ok := raw["mcp_servers"]
 	if !ok {
-		return nil, fmt.Errorf("validate %s: missing [mcp_servers] table", path)
+		return &clientConfig{MCPServers: map[string]clientServer{}}, nil
 	}
 	serversMap, ok := serversValue.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("validate %s: [mcp_servers] must be a table", path)
-	}
-	if len(serversMap) == 0 {
-		return nil, fmt.Errorf("validate %s: [mcp_servers] must define at least one server table", path)
 	}
 	out := &clientConfig{MCPServers: map[string]clientServer{}}
 	for name, value := range serversMap {

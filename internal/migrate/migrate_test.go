@@ -82,24 +82,53 @@ args = ["-y", "github", "--api-key=sk-secret", "--api_key=sk-secret-two"]
 	}
 }
 
-func TestRunCodexRejectsMissingMCPServersTable(t *testing.T) {
-	dir := t.TempDir()
-	source := filepath.Join(dir, "config.toml")
-	err := os.WriteFile(source, []byte(`
+func TestRunCodexExplainsMissingMCPServersTable(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "missing table",
+			body: `
 [projects."/tmp/repo"]
 trust_level = "trusted"
-`), 0o600)
-	if err != nil {
-		t.Fatalf("write source: %v", err)
+`,
+		},
+		{
+			name: "empty table",
+			body: `
+[mcp_servers]
+`,
+		},
 	}
 
-	_, err = Run(Options{
-		Source:     SourceCodex,
-		ConfigPath: filepath.Join(dir, "lazymcp.yaml"),
-		SourcePath: source,
-	})
-	if err == nil || !strings.Contains(err.Error(), "missing [mcp_servers] table") {
-		t.Fatalf("error = %v", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			source := filepath.Join(dir, "config.toml")
+			err := os.WriteFile(source, []byte(tt.body), 0o600)
+			if err != nil {
+				t.Fatalf("write source: %v", err)
+			}
+
+			_, err = Run(Options{
+				Source:     SourceCodex,
+				ConfigPath: filepath.Join(dir, "lazymcp.yaml"),
+				SourcePath: source,
+			})
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			for _, want := range []string{
+				"no direct Codex MCP servers to import",
+				"imports only [mcp_servers.*] entries",
+				source,
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %v, want %q", err, want)
+				}
+			}
+		})
 	}
 }
 
