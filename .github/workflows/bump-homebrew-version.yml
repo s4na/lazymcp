@@ -1,0 +1,52 @@
+name: Bump Homebrew version
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - Formula/lazymcp.rb
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Bump patch version
+        id: bump
+        run: |
+          ruby <<'RUBY'
+          path = "Formula/lazymcp.rb"
+          content = File.read(path)
+          match = content.match(/^(\s*version\s+")(\d+)\.(\d+)\.(\d+)(")$/)
+          abort "Could not find semantic version in #{path}" unless match
+
+          new_version = [
+            match[2].to_i,
+            match[3].to_i,
+            match[4].to_i + 1,
+          ].join(".")
+
+          updated = content.sub(match[0], "#{match[1]}#{new_version}#{match[5]}")
+          File.write(path, updated)
+          File.open(ENV.fetch("GITHUB_OUTPUT"), "a") do |output|
+            output.puts "version=#{new_version}"
+          end
+          RUBY
+
+      - name: Commit and push version bump
+        env:
+          BUMP_VERSION: ${{ steps.bump.outputs.version }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/lazymcp.rb
+          git commit -m "Bump Homebrew formula version to ${BUMP_VERSION}"
+          git push "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
