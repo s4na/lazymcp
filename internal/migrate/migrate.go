@@ -239,6 +239,12 @@ func discoverCodex(opts Options) (map[string]config.Server, []string, []string, 
 	}
 	sourceFiles = append(sourceFiles, pluginFiles...)
 	skipped = append(skipped, pluginSkipped...)
+	appCacheFiles, appCacheSkipped, err := readCodexAppToolCacheSkips(filepath.Dir(path))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	sourceFiles = append(sourceFiles, appCacheFiles...)
+	skipped = append(skipped, appCacheSkipped...)
 	servers, convertedSkipped := convert(mcpServers)
 	skipped = append(skipped, convertedSkipped...)
 	sort.Strings(skipped)
@@ -315,6 +321,82 @@ func readPluginMCPManifest(path string) (*pluginMCPManifest, error) {
 		manifest.MCPServers = map[string]clientServer{}
 	}
 	return &manifest, nil
+}
+
+func readCodexAppToolCacheSkips(codexDir string) ([]string, []string, error) {
+	pattern := filepath.Join(codexDir, "cache", "codex_apps_tools", "*.json")
+	paths, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, nil, err
+	}
+	sort.Strings(paths)
+	connectors := map[string]appConnectorSummary{}
+	var sourceFiles []string
+	for _, path := range paths {
+		cache, err := readAppToolsCache(path)
+		if err != nil {
+			return nil, nil, err
+		}
+		sourceFiles = append(sourceFiles, path)
+		for _, tool := range cache.Tools {
+			key := tool.ConnectorID
+			if key == "" {
+				key = tool.ServerName
+			}
+			if key == "" {
+				key = tool.ConnectorName
+			}
+			if key == "" {
+				continue
+			}
+			summary := connectors[key]
+			if summary.Name == "" {
+				summary.Name = tool.ConnectorName
+			}
+			if summary.Name == "" {
+				summary.Name = tool.ServerName
+			}
+			summary.ToolCount++
+			connectors[key] = summary
+		}
+	}
+	var skipped []string
+	for id, summary := range connectors {
+		name := summary.Name
+		if name == "" {
+			name = id
+		}
+		skipped = append(skipped, fmt.Sprintf("%s: Codex App connector cache has %d tools but no local stdio MCP command to import", name, summary.ToolCount))
+	}
+	sort.Strings(skipped)
+	return sourceFiles, skipped, nil
+}
+
+type appToolsCache struct {
+	Tools []appToolCacheEntry `json:"tools"`
+}
+
+type appToolCacheEntry struct {
+	ServerName    string `json:"server_name"`
+	ConnectorID   string `json:"connector_id"`
+	ConnectorName string `json:"connector_name"`
+}
+
+type appConnectorSummary struct {
+	Name      string
+	ToolCount int
+}
+
+func readAppToolsCache(path string) (*appToolsCache, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var cache appToolsCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return &cache, nil
 }
 
 func convert(servers map[string]clientServer) (map[string]config.Server, []string) {

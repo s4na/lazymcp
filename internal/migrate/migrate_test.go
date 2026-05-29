@@ -169,6 +169,39 @@ trust_level = "trusted"
 	if err != nil {
 		t.Fatalf("write plugin manifest: %v", err)
 	}
+	cacheDir := filepath.Join(dir, "cache", "codex_apps_tools")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatalf("mkdir app tool cache dir: %v", err)
+	}
+	appCache := filepath.Join(cacheDir, "tools.json")
+	err = os.WriteFile(appCache, []byte(`
+{
+  "schema_version": 1,
+  "tools": [
+    {
+      "server_name": "codex_apps",
+      "connector_id": "connector_github",
+      "connector_name": "GitHub",
+      "tool_name": "search"
+    },
+    {
+      "server_name": "codex_apps",
+      "connector_id": "connector_github",
+      "connector_name": "GitHub",
+      "tool_name": "get_issue"
+    },
+    {
+      "server_name": "codex_apps",
+      "connector_id": "connector_asana",
+      "connector_name": "Asana",
+      "tool_name": "list_tasks"
+    }
+  ]
+}
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write app tool cache: %v", err)
+	}
 
 	plan, err := Run(Options{
 		Source:       SourceCodex,
@@ -186,11 +219,19 @@ trust_level = "trusted"
 	if got := plan.Servers["xcodebuildmcp"].Env["XCODEBUILDMCP_ENABLED_WORKFLOWS"]; got != "simulator,ui-automation" {
 		t.Fatalf("env = %q", got)
 	}
-	if !containsString(plan.SourceFiles, source) || !containsString(plan.SourceFiles, manifest) {
-		t.Fatalf("source files = %#v, want config and manifest", plan.SourceFiles)
+	if !containsString(plan.SourceFiles, source) || !containsString(plan.SourceFiles, manifest) || !containsString(plan.SourceFiles, appCache) {
+		t.Fatalf("source files = %#v, want config, manifest, and app cache", plan.SourceFiles)
 	}
 	if !containsString(plan.Skipped, "cloudflare-api: plugin MCP manifest uses unsupported remote transport") {
 		t.Fatalf("skipped = %#v", plan.Skipped)
+	}
+	for _, want := range []string{
+		"Asana: Codex App connector cache has 1 tools but no local stdio MCP command to import",
+		"GitHub: Codex App connector cache has 2 tools but no local stdio MCP command to import",
+	} {
+		if !containsString(plan.Skipped, want) {
+			t.Fatalf("skipped = %#v, want %q", plan.Skipped, want)
+		}
 	}
 	cfg, err := readLazyConfig(target)
 	if err != nil {
