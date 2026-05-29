@@ -214,6 +214,16 @@ trust_level = "trusted"
       "connector_id": "connector_asana",
       "connector_name": "Asana",
       "tool_name": "list_tasks"
+    },
+    {
+      "server_name": "codex_apps",
+      "connector_name": "Linear",
+      "tool_name": "list_issues"
+    },
+    {
+      "server_name": "codex_apps",
+      "connector_name": "Notion",
+      "tool_name": "search_pages"
     }
   ]
 }
@@ -247,6 +257,8 @@ trust_level = "trusted"
 	for _, want := range []string{
 		"Asana: Codex App connector cache has 1 tools but no local stdio MCP command to import",
 		"GitHub: Codex App connector cache has 2 tools but no local stdio MCP command to import",
+		"Linear: Codex App connector cache has 1 tools but no local stdio MCP command to import",
+		"Notion: Codex App connector cache has 1 tools but no local stdio MCP command to import",
 		"cloudflare-api: plugin MCP manifest uses unsupported remote transport",
 		"remote: Codex MCP server uses unsupported remote transport",
 	} {

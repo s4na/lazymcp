@@ -366,10 +366,13 @@ func readCodexAppToolCacheSkips(codexDir string) ([]string, []string, error) {
 				key = tool.Tool.Meta.ConnectorID
 			}
 			if key == "" {
-				key = tool.ServerName
+				key = tool.ConnectorName
 			}
 			if key == "" {
-				key = tool.ConnectorName
+				key = tool.Tool.Meta.ConnectorName
+			}
+			if key == "" {
+				key = tool.ServerName
 			}
 			if key == "" {
 				continue
