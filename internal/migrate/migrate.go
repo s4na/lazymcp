@@ -73,6 +73,9 @@ func Run(opts Options) (*Plan, error) {
 		Servers:     servers,
 		Skipped:     skipped,
 	}
+	if len(servers) == 0 && !hasExistingLazyProxySkip(skipped) {
+		return plan, fmt.Errorf("no importable Codex MCP servers found from %s; lazymcp imports Codex config.toml [mcp_servers.*] entries and stdio plugin .mcp.json servers, but remote Codex App connectors/plugins may be managed separately", primarySourceFile(sourceFiles))
+	}
 	if err := validateExistingLazyConfigFile(opts.ConfigPath); err != nil {
 		return plan, err
 	}
@@ -113,6 +116,13 @@ func Run(opts Options) (*Plan, error) {
 		}
 	}
 	return plan, nil
+}
+
+func primarySourceFile(sourceFiles []string) string {
+	if len(sourceFiles) == 0 {
+		return "Codex config"
+	}
+	return sourceFiles[0]
 }
 
 func discover(opts Options) (map[string]config.Server, []string, []string, error) {
@@ -232,12 +242,6 @@ func discoverCodex(opts Options) (map[string]config.Server, []string, []string, 
 	servers, convertedSkipped := convert(mcpServers)
 	skipped = append(skipped, convertedSkipped...)
 	sort.Strings(skipped)
-	if len(servers) == 0 {
-		if hasExistingLazyProxySkip(skipped) {
-			return servers, sourceFiles, skipped, nil
-		}
-		return nil, sourceFiles, skipped, fmt.Errorf("no importable Codex MCP servers found from %s; lazymcp imports Codex config.toml [mcp_servers.*] entries and stdio plugin .mcp.json servers, but remote Codex App connectors/plugins may be managed separately", path)
-	}
 	return servers, sourceFiles, skipped, nil
 }
 

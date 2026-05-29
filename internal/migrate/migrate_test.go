@@ -237,7 +237,7 @@ trust_level = "trusted"
 		t.Fatalf("write plugin manifest: %v", err)
 	}
 
-	_, err = Run(Options{
+	plan, err := Run(Options{
 		Source:       SourceCodex,
 		ConfigPath:   target,
 		SourcePath:   source,
@@ -246,6 +246,9 @@ trust_level = "trusted"
 	})
 	if err == nil || !strings.Contains(err.Error(), "no importable Codex MCP servers found") {
 		t.Fatalf("error = %v", err)
+	}
+	if plan == nil || !containsString(plan.Skipped, "cloudflare-api: plugin MCP manifest uses unsupported remote transport") {
+		t.Fatalf("plan = %#v, want skipped remote server", plan)
 	}
 	if _, err := os.Stat(target); !os.IsNotExist(err) {
 		t.Fatalf("target config was created for unsupported-only plugin")
