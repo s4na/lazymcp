@@ -221,7 +221,7 @@ Codex 側がすでに `lazymcp` プロキシだけを指している場合も、
 各テーブルには、文字列の `command`、任意の文字列配列 `args`、任意の文字列値テーブル `env` を指定できます。
 同じ Codex 設定ディレクトリの `.tmp/plugins/plugins/*/.mcp.json` も探索し、plugin が提供する stdio 形式の `mcpServers` もインポートします。
 `type: "http"` や `url` だけを持つ remote MCP、Codex App の connector として管理される remote tools は、ローカルプロセスとして遅延起動できないため skipped として表示します。
-これらの remote connector / remote MCP は、`lazymcp` がローカルプロセスとして起動・停止できないため、`lazymcp` に移行してもセッションごとのメモリ使用量を直接削減する対象にはなりません。
+これらの remote connector / remote MCP は、`lazymcp` がローカルプロセスとして起動・停止できず、lazymcp config に取り込まれないため、セッションごとのメモリ使用量を直接削減する対象にはなりません。
 Codex 設定ファイル内に unsupported な remote MCP が残っている場合、`--diff` / `--write` / `-y` はそれを削除しないように、lazymcp config の差分表示や書き込みと Codex 登録の書き換えを行う前に停止します。
 Codex App の tool cache に残っている connector も確認し、ローカル stdio command が無いため移行できない connector 名と tool 数を skipped に表示します。
 `[mcp_servers.<name>]` と import 可能な plugin MCP server がどちらも見つからない場合は、Codex App connectors/plugins が別管理の可能性があることを説明して停止します。
