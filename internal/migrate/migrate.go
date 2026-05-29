@@ -552,7 +552,7 @@ func isCodexBundledMCPServer(_ string, srv clientServer) bool {
 		return true
 	}
 	for key := range srv.Env {
-		if key == "CODEX_CLI_PATH" || strings.HasPrefix(key, "NODE_REPL_") {
+		if strings.HasPrefix(key, "NODE_REPL_") {
 			return true
 		}
 	}

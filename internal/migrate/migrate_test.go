@@ -602,6 +602,9 @@ func TestRunCodexDoesNotTreatNodeReplNameAsBundledByItself(t *testing.T) {
 [mcp_servers.node_repl]
 command = "npx"
 args = ["-y", "custom-node-repl"]
+
+[mcp_servers.node_repl.env]
+CODEX_CLI_PATH = "/Applications/Codex.app/Contents/Resources/codex"
 `), 0o600)
 	if err != nil {
 		t.Fatalf("write source: %v", err)
