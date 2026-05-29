@@ -132,10 +132,33 @@ func newRootCommand() *cobra.Command {
 		},
 	})
 
+	root.AddCommand(newStatusCommand(&configPath))
 	root.AddCommand(newMigrateCommand(&configPath))
 
 	root.SetContext(context.Background())
 	return root
+}
+
+func newStatusCommand(configPath *string) *cobra.Command {
+	var codexConfigPath string
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show MCP settings discovered in Codex CLI, Codex App, and lazymcp",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			report, err := migrate.InspectStatus(migrate.StatusOptions{
+				ConfigPath:      *configPath,
+				CodexConfigPath: codexConfigPath,
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Fprint(cmd.OutOrStdout(), migrate.FormatStatus(report))
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&codexConfigPath, "codex-config", "", "Codex config.toml path")
+	return cmd
 }
 
 func newMigrateCommand(configPath *string) *cobra.Command {
