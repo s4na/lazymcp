@@ -122,6 +122,7 @@ trust_level = "trusted"
 			for _, want := range []string{
 				"no direct Codex MCP servers to import",
 				"imports only [mcp_servers.*] entries",
+				"Codex App connectors or plugins may be managed separately",
 				source,
 			} {
 				if !strings.Contains(err.Error(), want) {

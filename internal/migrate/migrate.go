@@ -219,7 +219,7 @@ func discoverCodex(opts Options) (map[string]config.Server, []string, []string, 
 		if len(skipped) > 0 {
 			return servers, []string{path}, skipped, nil
 		}
-		return nil, []string{path}, skipped, fmt.Errorf("no direct Codex MCP servers to import from %s; lazymcp currently imports only [mcp_servers.*] entries from Codex config.toml", path)
+		return nil, []string{path}, skipped, fmt.Errorf("no direct Codex MCP servers to import from %s; lazymcp currently imports only [mcp_servers.*] entries from Codex config.toml, and Codex App connectors or plugins may be managed separately", path)
 	}
 	return servers, []string{path}, skipped, nil
 }
