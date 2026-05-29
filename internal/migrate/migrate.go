@@ -961,8 +961,13 @@ func maskArgs(args []string) []string {
 }
 
 func isSecretFlag(arg string) bool {
-	upper := strings.ToUpper(strings.TrimLeft(arg, "-"))
-	return strings.Contains(upper, "TOKEN") || strings.Contains(upper, "SECRET") || strings.Contains(upper, "PASSWORD") || strings.Contains(upper, "API-KEY") || strings.Contains(upper, "API_KEY")
+	normalized := strings.ToUpper(strings.NewReplacer("-", "", "_", "").Replace(strings.TrimLeft(arg, "-")))
+	return normalized == "KEY" ||
+		strings.Contains(normalized, "TOKEN") ||
+		strings.Contains(normalized, "SECRET") ||
+		strings.Contains(normalized, "PASSWORD") ||
+		strings.Contains(normalized, "APIKEY") ||
+		strings.Contains(normalized, "ACCESSKEY")
 }
 
 func secretAssignment(arg string) bool {

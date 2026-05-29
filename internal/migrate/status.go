@@ -346,13 +346,7 @@ func redactURL(raw string) string {
 }
 
 func isSecretURLQueryKey(key string) bool {
-	normalized := strings.ToUpper(strings.NewReplacer("-", "", "_", "").Replace(key))
-	return normalized == "KEY" ||
-		strings.Contains(normalized, "TOKEN") ||
-		strings.Contains(normalized, "SECRET") ||
-		strings.Contains(normalized, "PASSWORD") ||
-		strings.Contains(normalized, "APIKEY") ||
-		strings.Contains(normalized, "ACCESSKEY")
+	return isSecretFlag(key)
 }
 
 func appToolConnectorKey(tool appToolCacheEntry) string {

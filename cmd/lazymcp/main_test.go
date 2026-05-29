@@ -176,7 +176,7 @@ func TestStatusShowsCodexCLIAppAndLazyMCPSettings(t *testing.T) {
 	err := os.WriteFile(codexConfig, []byte(`
 [mcp_servers.github]
 command = "npx"
-args = ["-y", "github", "--api-key=secret"]
+args = ["-y", "github", "--key=secret", "--apikey=secret", "--apiKey=secret", "--access-key", "secret", "--api-key=secret"]
 
 [mcp_servers.remote]
 type = "http"
@@ -268,7 +268,7 @@ servers:
 		"Codex CLI (" + codexConfig + ")",
 		"github",
 		"importable",
-		"npx -y github --api-key=<redacted>",
+		"npx -y github --key=<redacted> --apikey=<redacted> --apiKey=<redacted> --access-key <redacted> --api-key=<redacted>",
 		"remote",
 		"https://%3Credacted%3E@example.com/mcp?access_key=%3Credacted%3E&apiKey=%3Credacted%3E&api_key=%3Credacted%3E&apikey=%3Credacted%3E&debug=1&key=%3Credacted%3E",
 		"<redacted-url>",
