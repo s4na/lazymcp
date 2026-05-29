@@ -82,9 +82,249 @@ args = ["-y", "github", "--api-key=sk-secret", "--api_key=sk-secret-two"]
 	}
 }
 
-func TestRunCodexRejectsMissingMCPServersTable(t *testing.T) {
+func TestRunCodexExplainsMissingMCPServersTable(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "missing table",
+			body: `
+[projects."/tmp/repo"]
+trust_level = "trusted"
+`,
+		},
+		{
+			name: "empty table",
+			body: `
+[mcp_servers]
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			source := filepath.Join(dir, "config.toml")
+			err := os.WriteFile(source, []byte(tt.body), 0o600)
+			if err != nil {
+				t.Fatalf("write source: %v", err)
+			}
+
+			_, err = Run(Options{
+				Source:     SourceCodex,
+				ConfigPath: filepath.Join(dir, "lazymcp.yaml"),
+				SourcePath: source,
+			})
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			for _, want := range []string{
+				"no importable Codex MCP servers found",
+				"imports Codex config.toml [mcp_servers.*] entries",
+				"remote Codex App connectors/plugins may be managed separately",
+				source,
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error = %v, want %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+func TestRunCodexImportsPluginMCPManifestServers(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.local]
+command = "npx"
+args = ["-y", "local-mcp"]
+
+[mcp_servers.remote]
+type = "http"
+url = "https://example.com/mcp"
+
+[projects."/tmp/repo"]
+trust_level = "trusted"
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	pluginDir := filepath.Join(dir, ".tmp", "plugins", "plugins", "build-ios-apps")
+	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+	manifest := filepath.Join(pluginDir, ".mcp.json")
+	err = os.WriteFile(manifest, []byte(`
+{
+  "mcpServers": {
+    "xcodebuildmcp": {
+      "command": "npx",
+      "args": ["-y", "xcodebuildmcp@latest", "mcp"],
+      "env": {
+        "XCODEBUILDMCP_ENABLED_WORKFLOWS": "simulator,ui-automation"
+      }
+    },
+    "cloudflare-api": {
+      "type": "http",
+      "url": "https://mcp.cloudflare.com/mcp"
+    }
+  }
+}
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write plugin manifest: %v", err)
+	}
+	cacheDir := filepath.Join(dir, "cache", "codex_apps_tools")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatalf("mkdir app tool cache dir: %v", err)
+	}
+	appCache := filepath.Join(cacheDir, "tools.json")
+	err = os.WriteFile(appCache, []byte(`
+{
+  "schema_version": 1,
+  "tools": [
+    {
+      "server_name": "codex_apps",
+      "tool_name": "search",
+      "tool": {
+        "name": "github_search",
+        "_meta": {
+          "connector_id": "connector_github",
+          "connector_name": "GitHub"
+        }
+      }
+    },
+    {
+      "server_name": "codex_apps",
+      "connector_id": "connector_github",
+      "connector_name": "GitHub",
+      "tool_name": "get_issue"
+    },
+    {
+      "server_name": "codex_apps",
+      "connector_id": "connector_github",
+      "connector_name": "GitHub",
+      "tool_name": "get_issue"
+    },
+    {
+      "server_name": "codex_apps",
+      "connector_id": "connector_asana",
+      "connector_name": "Asana",
+      "tool_name": "list_tasks"
+    },
+    {
+      "server_name": "codex_apps",
+      "connector_name": "Linear",
+      "tool_name": "list_issues"
+    },
+    {
+      "server_name": "codex_apps",
+      "connector_name": "Notion",
+      "tool_name": "search_pages"
+    }
+  ]
+}
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write app tool cache: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   target,
+		SourcePath:   source,
+		Write:        true,
+		UpdateClient: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "updating the source client would remove unsupported Codex MCP servers") {
+		t.Fatalf("error = %v", err)
+	}
+	if _, ok := plan.Servers["xcodebuildmcp"]; !ok {
+		t.Fatalf("servers = %#v, want xcodebuildmcp", plan.Servers)
+	}
+	if _, ok := plan.Servers["local"]; !ok {
+		t.Fatalf("servers = %#v, want local Codex MCP", plan.Servers)
+	}
+	if got := plan.Servers["xcodebuildmcp"].Env["XCODEBUILDMCP_ENABLED_WORKFLOWS"]; got != "simulator,ui-automation" {
+		t.Fatalf("env = %q", got)
+	}
+	if !containsString(plan.SourceFiles, source) || !containsString(plan.SourceFiles, manifest) || !containsString(plan.SourceFiles, appCache) {
+		t.Fatalf("source files = %#v, want config, manifest, and app cache", plan.SourceFiles)
+	}
+	for _, want := range []string{
+		"Asana: Codex App connector cache has 1 tools but no local stdio MCP command to import",
+		"GitHub: Codex App connector cache has 2 tools but no local stdio MCP command to import",
+		"Linear: Codex App connector cache has 1 tools but no local stdio MCP command to import",
+		"Notion: Codex App connector cache has 1 tools but no local stdio MCP command to import",
+		"cloudflare-api: plugin MCP manifest uses unsupported remote transport",
+		"remote: Codex MCP server uses unsupported remote transport",
+	} {
+		if !containsString(plan.Skipped, want) {
+			t.Fatalf("skipped = %#v, want %q", plan.Skipped, want)
+		}
+	}
+	if !containsString(plan.Blocked, "remote: Codex MCP server uses unsupported remote transport") {
+		t.Fatalf("blocked = %#v", plan.Blocked)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("target config was created despite blocked source client update")
+	}
+	gotCodex, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if strings.Contains(string(gotCodex), "[mcp_servers.lazymcp]") {
+		t.Fatalf("codex source was rewritten despite blocked remote server:\n%s", string(gotCodex))
+	}
+}
+
+func TestRunCodexReportsMalformedAppToolCacheWithoutBlockingImport(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.local]
+command = "npx"
+args = ["-y", "local-mcp"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	cacheDir := filepath.Join(dir, "cache", "codex_apps_tools")
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatalf("mkdir app tool cache dir: %v", err)
+	}
+	badCache := filepath.Join(cacheDir, "broken.json")
+	if err := os.WriteFile(badCache, []byte(`{"tools": [`), 0o600); err != nil {
+		t.Fatalf("write bad app tool cache: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: filepath.Join(dir, "lazymcp.yaml"),
+		SourcePath: source,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if _, ok := plan.Servers["local"]; !ok {
+		t.Fatalf("servers = %#v, want local", plan.Servers)
+	}
+	if !containsString(plan.SourceFiles, badCache) {
+		t.Fatalf("source files = %#v, want bad app cache", plan.SourceFiles)
+	}
+	want := badCache + ": Codex App tool cache could not be read for skipped connector diagnostics"
+	if !containsSubstring(plan.Skipped, want) {
+		t.Fatalf("skipped = %#v, want substring %q", plan.Skipped, want)
+	}
+}
+
+func TestRunCodexRejectsOnlyUnsupportedPluginMCPManifests(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
 	err := os.WriteFile(source, []byte(`
 [projects."/tmp/repo"]
 trust_level = "trusted"
@@ -92,14 +332,46 @@ trust_level = "trusted"
 	if err != nil {
 		t.Fatalf("write source: %v", err)
 	}
+	pluginDir := filepath.Join(dir, ".tmp", "plugins", "plugins", "cloudflare")
+	if err := os.MkdirAll(pluginDir, 0o700); err != nil {
+		t.Fatalf("mkdir plugin dir: %v", err)
+	}
+	err = os.WriteFile(filepath.Join(pluginDir, ".mcp.json"), []byte(`
+{
+  "mcpServers": {
+    "cloudflare-api": {
+      "type": "http",
+      "url": "https://mcp.cloudflare.com/mcp"
+    }
+  }
+}
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write plugin manifest: %v", err)
+	}
 
-	_, err = Run(Options{
-		Source:     SourceCodex,
-		ConfigPath: filepath.Join(dir, "lazymcp.yaml"),
-		SourcePath: source,
+	plan, err := Run(Options{
+		Source:       SourceCodex,
+		ConfigPath:   target,
+		SourcePath:   source,
+		Write:        true,
+		UpdateClient: true,
 	})
-	if err == nil || !strings.Contains(err.Error(), "missing [mcp_servers] table") {
+	if err == nil || !strings.Contains(err.Error(), "no importable Codex MCP servers found") {
 		t.Fatalf("error = %v", err)
+	}
+	if plan == nil || !containsString(plan.Skipped, "cloudflare-api: plugin MCP manifest uses unsupported remote transport") {
+		t.Fatalf("plan = %#v, want skipped remote server", plan)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("target config was created for unsupported-only plugin")
+	}
+	gotCodex, err := os.ReadFile(source)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if strings.Contains(string(gotCodex), "[mcp_servers.lazymcp]") {
+		t.Fatalf("source was rewritten despite no importable servers:\n%s", string(gotCodex))
 	}
 }
 
@@ -1011,4 +1283,22 @@ servers:
 	if plan == nil || len(plan.Conflicts) != 1 || !strings.Contains(plan.Conflicts[0], "namespace") {
 		t.Fatalf("conflicts = %#v", plan)
 	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSubstring(values []string, want string) bool {
+	for _, value := range values {
+		if strings.Contains(value, want) {
+			return true
+		}
+	}
+	return false
 }

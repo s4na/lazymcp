@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -37,18 +38,22 @@ type Plan struct {
 	Servers      map[string]config.Server
 	Conflicts    []string
 	Skipped      []string
+	Blocked      []string
 	ChangedFiles []string
 	Backups      []string
 }
 
 type clientConfig struct {
 	MCPServers map[string]clientServer
+	Skipped    []string
 }
 
 type clientServer struct {
-	Command string
-	Args    []string
-	Env     map[string]string
+	Type    string            `json:"type" toml:"type"`
+	Command string            `json:"command" toml:"command"`
+	Args    []string          `json:"args" toml:"args"`
+	Env     map[string]string `json:"env" toml:"env"`
+	URL     string            `json:"url" toml:"url"`
 }
 
 var nowUTC = func() time.Time {
@@ -59,7 +64,7 @@ func Run(opts Options) (*Plan, error) {
 	if opts.ConfigPath == "" {
 		opts.ConfigPath = config.DefaultPath()
 	}
-	servers, sourceFiles, skipped, err := discover(opts)
+	servers, sourceFiles, skipped, blocked, err := discover(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -69,6 +74,10 @@ func Run(opts Options) (*Plan, error) {
 		SourceFiles: sourceFiles,
 		Servers:     servers,
 		Skipped:     skipped,
+		Blocked:     blocked,
+	}
+	if len(servers) == 0 && !hasExistingLazyProxySkip(skipped) {
+		return plan, fmt.Errorf("no importable Codex MCP servers found from %s; lazymcp imports Codex config.toml [mcp_servers.*] entries and stdio plugin .mcp.json servers, but remote Codex App connectors/plugins may be managed separately", primarySourceFile(sourceFiles))
 	}
 	if err := validateExistingLazyConfigFile(opts.ConfigPath); err != nil {
 		return plan, err
@@ -80,6 +89,9 @@ func Run(opts Options) (*Plan, error) {
 	plan.Conflicts = conflicts
 	if len(conflicts) > 0 {
 		return plan, fmt.Errorf("migration has conflicts: %s", strings.Join(conflicts, "; "))
+	}
+	if opts.UpdateClient && len(plan.Blocked) > 0 {
+		return plan, fmt.Errorf("updating the source client would remove unsupported Codex MCP servers: %s", strings.Join(plan.Blocked, "; "))
 	}
 	if opts.Write {
 		changed, backups, err := writeConfig(opts.ConfigPath, servers, opts.Overwrite)
@@ -112,12 +124,19 @@ func Run(opts Options) (*Plan, error) {
 	return plan, nil
 }
 
-func discover(opts Options) (map[string]config.Server, []string, []string, error) {
+func primarySourceFile(sourceFiles []string) string {
+	if len(sourceFiles) == 0 {
+		return "Codex config"
+	}
+	return sourceFiles[0]
+}
+
+func discover(opts Options) (map[string]config.Server, []string, []string, []string, error) {
 	switch opts.Source {
 	case SourceCodex:
 		return discoverCodex(opts)
 	default:
-		return nil, nil, nil, fmt.Errorf("unsupported source %q", opts.Source)
+		return nil, nil, nil, nil, fmt.Errorf("unsupported source %q", opts.Source)
 	}
 }
 
@@ -201,27 +220,208 @@ func absoluteOrOriginal(path string) string {
 	return abs
 }
 
-func discoverCodex(opts Options) (map[string]config.Server, []string, []string, error) {
+func discoverCodex(opts Options) (map[string]config.Server, []string, []string, []string, error) {
 	path := opts.SourcePath
 	if path == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return nil, nil, nil, err
+			return nil, nil, nil, nil, err
 		}
 		path = filepath.Join(home, ".codex", "config.toml")
 	}
 	raw, err := readCodexConfig(path)
 	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	mcpServers := raw.MCPServers
+	sourceFiles := []string{path}
+	skipped := append([]string(nil), raw.Skipped...)
+	blocked := []string{}
+	pluginServers, pluginFiles, pluginSkipped, err := readCodexPluginMCPManifests(filepath.Dir(path), mcpServers)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	for name, srv := range pluginServers {
+		mcpServers[name] = srv
+	}
+	sourceFiles = append(sourceFiles, pluginFiles...)
+	skipped = append(skipped, pluginSkipped...)
+	appCacheFiles, appCacheSkipped, err := readCodexAppToolCacheSkips(filepath.Dir(path))
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	sourceFiles = append(sourceFiles, appCacheFiles...)
+	skipped = append(skipped, appCacheSkipped...)
+	servers, convertedSkipped := convert(mcpServers)
+	skipped = append(skipped, convertedSkipped...)
+	blocked = append(blocked, directCodexBlockedSkips(convertedSkipped)...)
+	sort.Strings(skipped)
+	sort.Strings(blocked)
+	return servers, sourceFiles, skipped, blocked, nil
+}
+
+func directCodexBlockedSkips(skipped []string) []string {
+	var blocked []string
+	for _, item := range skipped {
+		if strings.Contains(item, "Codex MCP server uses unsupported") || strings.Contains(item, "Codex MCP server has no command") {
+			blocked = append(blocked, item)
+		}
+	}
+	return blocked
+}
+
+func hasExistingLazyProxySkip(skipped []string) bool {
+	for _, item := range skipped {
+		if strings.Contains(item, "already points to lazymcp") {
+			return true
+		}
+	}
+	return false
+}
+
+func readCodexPluginMCPManifests(codexDir string, existing map[string]clientServer) (map[string]clientServer, []string, []string, error) {
+	pattern := filepath.Join(codexDir, ".tmp", "plugins", "plugins", "*", ".mcp.json")
+	paths, err := filepath.Glob(pattern)
+	if err != nil {
 		return nil, nil, nil, err
 	}
-	servers, skipped := convert(raw.MCPServers)
-	if len(servers) == 0 {
-		if len(skipped) > 0 {
-			return servers, []string{path}, skipped, nil
+	sort.Strings(paths)
+	servers := map[string]clientServer{}
+	var sourceFiles []string
+	var skipped []string
+	for _, path := range paths {
+		manifest, err := readPluginMCPManifest(path)
+		if err != nil {
+			return nil, nil, nil, err
 		}
-		return nil, nil, skipped, errors.New("no Codex MCP servers to import")
+		sourceFiles = append(sourceFiles, path)
+		for name, srv := range manifest.MCPServers {
+			if _, ok := existing[name]; ok {
+				skipped = append(skipped, fmt.Sprintf("%s: plugin MCP manifest duplicates Codex config entry", name))
+				continue
+			}
+			if _, ok := servers[name]; ok {
+				skipped = append(skipped, fmt.Sprintf("%s: duplicate plugin MCP manifest entry", name))
+				continue
+			}
+			if srv.Command == "" {
+				if srv.Type != "" || srv.URL != "" {
+					skipped = append(skipped, fmt.Sprintf("%s: plugin MCP manifest uses unsupported remote transport", name))
+					continue
+				}
+				skipped = append(skipped, fmt.Sprintf("%s: plugin MCP manifest has no command", name))
+				continue
+			}
+			if srv.Type != "" && srv.Type != "stdio" {
+				skipped = append(skipped, fmt.Sprintf("%s: plugin MCP manifest uses unsupported %q transport", name, srv.Type))
+				continue
+			}
+			servers[name] = srv
+		}
 	}
-	return servers, []string{path}, skipped, nil
+	sort.Strings(skipped)
+	return servers, sourceFiles, skipped, nil
+}
+
+type pluginMCPManifest struct {
+	MCPServers map[string]clientServer `json:"mcpServers"`
+}
+
+func readPluginMCPManifest(path string) (*pluginMCPManifest, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var manifest pluginMCPManifest
+	if err := json.Unmarshal(data, &manifest); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if manifest.MCPServers == nil {
+		manifest.MCPServers = map[string]clientServer{}
+	}
+	return &manifest, nil
+}
+
+func readCodexAppToolCacheSkips(codexDir string) ([]string, []string, error) {
+	pattern := filepath.Join(codexDir, "cache", "codex_apps_tools", "*.json")
+	paths, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, nil, err
+	}
+	sort.Strings(paths)
+	connectors := map[string]appConnectorSummary{}
+	var sourceFiles []string
+	var skipped []string
+	for _, path := range paths {
+		cache, err := readAppToolsCache(path)
+		if err != nil {
+			sourceFiles = append(sourceFiles, path)
+			skipped = append(skipped, fmt.Sprintf("%s: Codex App tool cache could not be read for skipped connector diagnostics: %v", path, err))
+			continue
+		}
+		sourceFiles = append(sourceFiles, path)
+		for _, tool := range cache.Tools {
+			key := appToolConnectorKey(tool)
+			if key == "" {
+				continue
+			}
+			toolName := appToolName(tool)
+			toolKey := key + "\x00" + toolName
+			summary := connectors[key]
+			if summary.Name == "" {
+				summary.Name = appToolConnectorName(tool)
+			}
+			if summary.Tools == nil {
+				summary.Tools = map[string]struct{}{}
+			}
+			summary.Tools[toolKey] = struct{}{}
+			connectors[key] = summary
+		}
+	}
+	for id, summary := range connectors {
+		name := summary.Name
+		if name == "" {
+			name = id
+		}
+		skipped = append(skipped, fmt.Sprintf("%s: Codex App connector cache has %d tools but no local stdio MCP command to import", name, len(summary.Tools)))
+	}
+	sort.Strings(skipped)
+	return sourceFiles, skipped, nil
+}
+
+type appToolsCache struct {
+	Tools []appToolCacheEntry `json:"tools"`
+}
+
+type appToolCacheEntry struct {
+	ServerName    string `json:"server_name"`
+	ToolName      string `json:"tool_name"`
+	ConnectorID   string `json:"connector_id"`
+	ConnectorName string `json:"connector_name"`
+	Tool          struct {
+		Name string `json:"name"`
+		Meta struct {
+			ConnectorID   string `json:"connector_id"`
+			ConnectorName string `json:"connector_name"`
+		} `json:"_meta"`
+	} `json:"tool"`
+}
+
+type appConnectorSummary struct {
+	Name  string
+	Tools map[string]struct{}
+}
+
+func readAppToolsCache(path string) (*appToolsCache, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var cache appToolsCache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return &cache, nil
 }
 
 func convert(servers map[string]clientServer) (map[string]config.Server, []string) {
@@ -230,6 +430,18 @@ func convert(servers map[string]clientServer) (map[string]config.Server, []strin
 	for name, srv := range servers {
 		if isLazyMCPProxy(srv) {
 			skipped = append(skipped, fmt.Sprintf("%s: already points to lazymcp", name))
+			continue
+		}
+		if srv.Command == "" {
+			if srv.Type != "" || srv.URL != "" {
+				skipped = append(skipped, fmt.Sprintf("%s: Codex MCP server uses unsupported remote transport", name))
+				continue
+			}
+			skipped = append(skipped, fmt.Sprintf("%s: Codex MCP server has no command", name))
+			continue
+		}
+		if srv.Type != "" && srv.Type != "stdio" {
+			skipped = append(skipped, fmt.Sprintf("%s: Codex MCP server uses unsupported %q transport", name, srv.Type))
 			continue
 		}
 		out[name] = config.Server{
@@ -436,6 +648,12 @@ func FormatPlan(plan *Plan) string {
 			fmt.Fprintf(&b, "  - %s\n", item)
 		}
 	}
+	if len(plan.Blocked) > 0 {
+		fmt.Fprintf(&b, "blocking source client update:\n")
+		for _, item := range plan.Blocked {
+			fmt.Fprintf(&b, "  - %s\n", item)
+		}
+	}
 	if len(plan.Conflicts) > 0 {
 		fmt.Fprintf(&b, "conflicts:\n")
 		for _, item := range plan.Conflicts {
@@ -508,14 +726,11 @@ func readCodexConfig(path string) (*clientConfig, error) {
 	}
 	serversValue, ok := raw["mcp_servers"]
 	if !ok {
-		return nil, fmt.Errorf("validate %s: missing [mcp_servers] table", path)
+		return &clientConfig{MCPServers: map[string]clientServer{}}, nil
 	}
 	serversMap, ok := serversValue.(map[string]any)
 	if !ok {
 		return nil, fmt.Errorf("validate %s: [mcp_servers] must be a table", path)
-	}
-	if len(serversMap) == 0 {
-		return nil, fmt.Errorf("validate %s: [mcp_servers] must define at least one server table", path)
 	}
 	out := &clientConfig{MCPServers: map[string]clientServer{}}
 	for name, value := range serversMap {
@@ -537,8 +752,25 @@ func readCodexConfig(path string) (*clientConfig, error) {
 
 func parseCodexServer(path, name string, table map[string]any) (clientServer, error) {
 	var srv clientServer
+	if serverType, ok := table["type"]; ok {
+		serverTypeString, ok := serverType.(string)
+		if !ok {
+			return srv, fmt.Errorf("validate %s: [mcp_servers.%s].type must be a string", path, name)
+		}
+		srv.Type = serverTypeString
+	}
+	if url, ok := table["url"]; ok {
+		urlString, ok := url.(string)
+		if !ok {
+			return srv, fmt.Errorf("validate %s: [mcp_servers.%s].url must be a string", path, name)
+		}
+		srv.URL = urlString
+	}
 	command, ok := table["command"]
 	if !ok {
+		if srv.Type != "" || srv.URL != "" {
+			return srv, nil
+		}
 		return srv, fmt.Errorf("validate %s: [mcp_servers.%s].command is required", path, name)
 	}
 	commandString, ok := command.(string)
@@ -729,8 +961,13 @@ func maskArgs(args []string) []string {
 }
 
 func isSecretFlag(arg string) bool {
-	upper := strings.ToUpper(strings.TrimLeft(arg, "-"))
-	return strings.Contains(upper, "TOKEN") || strings.Contains(upper, "SECRET") || strings.Contains(upper, "PASSWORD") || strings.Contains(upper, "API-KEY") || strings.Contains(upper, "API_KEY")
+	normalized := strings.ToUpper(strings.NewReplacer("-", "", "_", "").Replace(strings.TrimLeft(arg, "-")))
+	return normalized == "KEY" ||
+		strings.Contains(normalized, "TOKEN") ||
+		strings.Contains(normalized, "SECRET") ||
+		strings.Contains(normalized, "PASSWORD") ||
+		strings.Contains(normalized, "APIKEY") ||
+		strings.Contains(normalized, "ACCESSKEY")
 }
 
 func secretAssignment(arg string) bool {

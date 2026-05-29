@@ -30,6 +30,13 @@ Codex にすでに設定されている MCP サーバーをインポートしま
 lazymcp migrate --write
 ```
 
+現在見えている MCP 設定を確認するには、`status` を使います。
+Codex CLI、Codex App、lazymcp の各設定元ごとに、登録済み server / plugin / connector と、ローカル stdio MCP として import できるかを一覧できます。
+
+```bash
+lazymcp status
+```
+
 既存の Codex MCP サーバーをインポートした後、Codex の直接的な MCP サーバー登録は単一の `lazymcp` プロキシエントリに置き換えられます。
 
 `-y` を使うと、`--write` と同じように lazymcp 設定を書き込み、Codex 登録も行います。
@@ -43,7 +50,7 @@ lazymcp migrate -y
 Codex から移行した直後のように `tools:` が空のバックエンドは、クライアントからの最初の `tools/list` で起動してツール一覧を検出し、そのセッション内でキャッシュします。
 `lazymcp serve` は `~/tmp/lazymcp/lazymcp.log` に起動時の診断ログとバックエンド stderr を追記します。`~/tmp` がない環境では、起動時に `~/tmp/lazymcp` を作成します。
 
-`lazymcp migrate` は Codex の `~/.codex/config.toml` を読み取り、直接登録されている各 `[mcp_servers.<name>]` エントリを `~/.config/lazymcp/config.yaml` に移します。
+`lazymcp migrate` は Codex の `~/.codex/config.toml` と plugin の `.mcp.json` を読み取り、直接登録されている各 `[mcp_servers.<name>]` エントリと import 可能な stdio plugin MCP server を `~/.config/lazymcp/config.yaml` に移します。
 既存ファイルを置き換える前には、タイムスタンプ付きのバックアップを作成します。
 変換後の Codex MCP 設定には次のエントリだけが残ります。
 
@@ -192,9 +199,19 @@ Codex 側がすでに `lazymcp` プロキシだけを指している場合も、
 同じ名前の既存サーバーをインポートしたエントリで置き換えたいことが明確な場合だけ、`--overwrite` を使ってください。
 別のサーバーとの名前空間の競合がある場合は、引き続き移行を停止します。
 
-移行処理は Codex の `~/.codex/config.toml` を読み取り、インポート前に `[mcp_servers.<name>]` テーブルが含まれていることを検証します。
+移行処理は Codex の `~/.codex/config.toml` を読み取り、直接登録された `[mcp_servers.<name>]` テーブルをインポートします。
 各テーブルには、文字列の `command`、任意の文字列配列 `args`、任意の文字列値テーブル `env` を指定できます。
+同じ Codex 設定ディレクトリの `.tmp/plugins/plugins/*/.mcp.json` も探索し、plugin が提供する stdio 形式の `mcpServers` もインポートします。
+`type: "http"` や `url` だけを持つ remote MCP、Codex App の connector として管理される remote tools は、ローカルプロセスとして遅延起動できないため skipped として表示します。
+Codex 設定ファイル内に unsupported な remote MCP が残っている場合、`--write` / `-y` はそれを削除しないように、lazymcp config の書き込みと Codex 登録の書き換えを行う前に停止します。
+Codex App の tool cache に残っている connector も確認し、ローカル stdio command が無いため移行できない connector 名と tool 数を skipped に表示します。
+`[mcp_servers.<name>]` と import 可能な plugin MCP server がどちらも見つからない場合は、Codex App connectors/plugins が別管理の可能性があることを説明して停止します。
 移行前後には Codex と lazymcp の設定ファイルを再読み込みして検証し、形式や必須項目に問題がある場合はエラーを出して停止します。
+
+移行の前後に全体像を見たい場合は、`lazymcp status` を使ってください。
+このコマンドは Codex CLI の `~/.codex/config.toml`、Codex App の plugin manifest / connector cache、lazymcp の config をそれぞれ読み取り、見つかった MCP 設定を source ごとの表で表示します。
+設定ファイルや cache が読めない場合も、可能な限り他の source の一覧を続け、読めなかった理由を warning として表示します。
+Codex config の場所を明示したい場合は `--codex-config /path/to/config.toml` を指定できます。
 
 ドライランのレポートでは、トークンやシークレットが出力されないように環境変数の値をマスクします。
 インポートしたサーバーにはツールスキーマは含まれません。Codex の MCP 設定にはバックエンドの起動コマンドしか含まれていないためです。
@@ -202,6 +219,7 @@ Codex 側がすでに `lazymcp` プロキシだけを指している場合も、
 検出した一覧は現在の stdio セッション内で保持されます。ツールを完全に遅延起動したい場合や、起動できない環境でも一覧を表示したい場合は、`tools:` エントリを設定ファイルに追加してください。
 
 Codex 登録が有効な場合、元の Codex 設定はバックアップされ、`[mcp_servers]` には `lazymcp` だけが残るように書き換えられます。
+ただし、移行できない direct Codex MCP server がある場合は、その server を消さないために書き換えを停止します。
 その他の Codex 設定は保持されます。
 
 ## ライセンス
