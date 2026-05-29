@@ -36,7 +36,7 @@ lazymcp init
 ```
 
 Codex にすでに設定されている MCP サーバーをインポートします。
-`--write` を指定すると、インポートしたサーバーを lazymcp 設定に書き込み、`lazymcp` だけを Codex の MCP サーバーとして登録します。
+`--write` を指定すると、インポートしたサーバーを lazymcp 設定に書き込み、Codex には `lazymcp` プロキシと保持が必要な Codex 同梱 MCP だけを登録します。
 
 ```bash
 lazymcp migrate --write
@@ -49,7 +49,7 @@ Codex CLI、Codex App、lazymcp の各設定元ごとに、登録済み server /
 lazymcp status
 ```
 
-既存の Codex MCP サーバーをインポートした後、Codex の直接的な MCP サーバー登録は単一の `lazymcp` プロキシエントリに置き換えられます。
+既存の Codex MCP サーバーをインポートした後、Codex の直接的な MCP サーバー登録は `lazymcp` プロキシエントリに置き換えられます。Codex 同梱 MCP がある場合は、そのエントリも保持します。
 
 `-y` を使うと、`--write` と同じように lazymcp 設定を書き込み、Codex 登録も行います。
 
@@ -64,7 +64,7 @@ Codex から移行した直後のように `tools:` が空のバックエンド�
 
 `lazymcp migrate` は Codex の `~/.codex/config.toml` と plugin の `.mcp.json` を読み取り、直接登録されている各 `[mcp_servers.<name>]` エントリと import 可能な stdio plugin MCP server を `~/.config/lazymcp/config.yaml` に移します。
 既存ファイルを置き換える前には、タイムスタンプ付きのバックアップを作成します。
-変換後の Codex MCP 設定には次のエントリだけが残ります。
+変換後の Codex MCP 設定には次の `lazymcp` エントリが残ります。Codex 同梱 MCP がある場合は、それらのエントリも残します。
 
 ```toml
 [mcp_servers.lazymcp]
@@ -239,7 +239,7 @@ Codex config の場所を明示したい場合は `--codex-config /path/to/confi
 移行後の `lazymcp serve` は、`tools:` が空のバックエンドについて最初の `tools/list` でバックエンドからツール一覧を検出します。
 検出した一覧は現在の stdio セッション内で保持されます。ツールを完全に遅延起動したい場合や、起動できない環境でも一覧を表示したい場合は、`tools:` エントリを設定ファイルに追加してください。
 
-Codex 登録が有効な場合、元の Codex 設定はバックアップされ、`[mcp_servers]` には `lazymcp` だけが残るように書き換えられます。
+Codex 登録が有効な場合、元の Codex 設定はバックアップされ、`[mcp_servers]` には `lazymcp` と保持が必要な Codex 同梱 MCP だけが残るように書き換えられます。
 ただし、移行できない direct Codex MCP server がある場合は、その server を消さないために書き換えを停止します。
 その他の Codex 設定は保持されます。
 

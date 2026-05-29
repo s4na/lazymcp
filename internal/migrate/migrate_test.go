@@ -589,6 +589,34 @@ NODE_REPL_NODE_PATH = "/Applications/Codex.app/Contents/Resources/node"
 	}
 }
 
+func TestRunCodexDoesNotTreatNodeReplNameAsBundledByItself(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	err := os.WriteFile(source, []byte(`
+[mcp_servers.node_repl]
+command = "npx"
+args = ["-y", "custom-node-repl"]
+`), 0o600)
+	if err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	plan, err := Run(Options{
+		Source:     SourceCodex,
+		ConfigPath: filepath.Join(dir, "lazymcp.yaml"),
+		SourcePath: source,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if _, ok := plan.Servers["node_repl"]; !ok {
+		t.Fatalf("servers = %#v, want custom node_repl imported", plan.Servers)
+	}
+	if containsSubstring(plan.Skipped, "Codex bundled MCP server") {
+		t.Fatalf("skipped = %#v, want no bundled skip", plan.Skipped)
+	}
+}
+
 func TestRunCodexReportsMalformedAppToolCacheWithoutBlockingImport(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")

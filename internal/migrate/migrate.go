@@ -545,12 +545,9 @@ func convert(servers map[string]clientServer) (map[string]config.Server, []strin
 	return out, skipped
 }
 
-func isCodexBundledMCPServer(name string, srv clientServer) bool {
+func isCodexBundledMCPServer(_ string, srv clientServer) bool {
 	command := filepath.ToSlash(srv.Command)
 	if strings.Contains(command, "/Codex.app/Contents/Resources/") {
-		return true
-	}
-	if name == "node_repl" {
 		return true
 	}
 	for key := range srv.Env {
