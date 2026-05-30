@@ -226,12 +226,28 @@ func codexProxyData(sourcePath, configPath string) ([]byte, []byte, bool, error)
 	if codexAlreadyUsesLazyProxy(raw, configPath) {
 		return before, before, false, nil
 	}
-	raw["mcp_servers"] = map[string]any{
+	nextServers := map[string]any{
 		"lazymcp": map[string]any{
 			"command": "lazymcp",
 			"args":    []string{"serve", "--config", absoluteOrOriginal(configPath)},
 		},
 	}
+	if servers, ok := raw["mcp_servers"].(map[string]any); ok {
+		for name, value := range servers {
+			table, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			srv, err := parseCodexServer("", name, table)
+			if err != nil {
+				continue
+			}
+			if isCodexBundledMCPServer(name, srv) {
+				nextServers[name] = value
+			}
+		}
+	}
+	raw["mcp_servers"] = nextServers
 	encoded, err := toml.Marshal(raw)
 	if err != nil {
 		return nil, nil, false, err
@@ -245,24 +261,35 @@ func codexAlreadyUsesLazyProxy(raw map[string]any, configPath string) bool {
 		return false
 	}
 	servers, ok := serversValue.(map[string]any)
-	if !ok || len(servers) != 1 {
-		return false
-	}
-	value, ok := servers["lazymcp"]
 	if !ok {
 		return false
 	}
-	table, ok := value.(map[string]any)
-	if !ok {
-		return false
-	}
-	srv, err := parseCodexServer("", "lazymcp", table)
-	if err != nil {
-		return false
-	}
+	var lazyProxy clientServer
+	hasLazyProxy := false
 	wantConfigPath := absoluteOrOriginal(configPath)
-	gotConfigPath, ok := lazyProxyConfigPath(srv.Args)
-	return isLazyMCPProxy(srv) && ok && samePath(gotConfigPath, wantConfigPath)
+	for name, value := range servers {
+		table, ok := value.(map[string]any)
+		if !ok {
+			return false
+		}
+		srv, err := parseCodexServer("", name, table)
+		if err != nil {
+			return false
+		}
+		if name == "lazymcp" {
+			lazyProxy = srv
+			hasLazyProxy = true
+			continue
+		}
+		if !isCodexBundledMCPServer(name, srv) {
+			return false
+		}
+	}
+	if !hasLazyProxy {
+		return false
+	}
+	gotConfigPath, ok := lazyProxyConfigPath(lazyProxy.Args)
+	return isLazyMCPProxy(lazyProxy) && ok && samePath(gotConfigPath, wantConfigPath)
 }
 
 func absoluteOrOriginal(path string) string {
@@ -289,16 +316,12 @@ func discoverCodex(opts Options) (map[string]config.Server, []string, []string, 
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	mcpServers := raw.MCPServers
 	sourceFiles := []string{path}
 	skipped := append([]string(nil), raw.Skipped...)
 	blocked := []string{}
-	pluginServers, pluginFiles, pluginSkipped, err := readCodexPluginMCPManifests(filepath.Dir(path), mcpServers)
+	pluginServers, pluginFiles, pluginSkipped, err := readCodexPluginMCPManifests(filepath.Dir(path), raw.MCPServers)
 	if err != nil {
 		return nil, nil, nil, nil, err
-	}
-	for name, srv := range pluginServers {
-		mcpServers[name] = srv
 	}
 	sourceFiles = append(sourceFiles, pluginFiles...)
 	skipped = append(skipped, pluginSkipped...)
@@ -308,9 +331,14 @@ func discoverCodex(opts Options) (map[string]config.Server, []string, []string, 
 	}
 	sourceFiles = append(sourceFiles, appCacheFiles...)
 	skipped = append(skipped, appCacheSkipped...)
-	servers, convertedSkipped := convert(mcpServers)
-	skipped = append(skipped, convertedSkipped...)
-	blocked = append(blocked, directCodexBlockedSkips(convertedSkipped)...)
+	servers, directSkipped := convert(raw.MCPServers, true)
+	pluginConverted, pluginConvertedSkipped := convert(pluginServers, false)
+	for name, srv := range pluginConverted {
+		servers[name] = srv
+	}
+	skipped = append(skipped, directSkipped...)
+	skipped = append(skipped, pluginConvertedSkipped...)
+	blocked = append(blocked, directCodexBlockedSkips(directSkipped)...)
 	sort.Strings(skipped)
 	sort.Strings(blocked)
 	return servers, sourceFiles, skipped, blocked, nil
@@ -480,12 +508,16 @@ func readAppToolsCache(path string) (*appToolsCache, error) {
 	return &cache, nil
 }
 
-func convert(servers map[string]clientServer) (map[string]config.Server, []string) {
+func convert(servers map[string]clientServer, preserveBundled bool) (map[string]config.Server, []string) {
 	out := map[string]config.Server{}
 	var skipped []string
 	for name, srv := range servers {
 		if isLazyMCPProxy(srv) {
 			skipped = append(skipped, fmt.Sprintf("%s: already points to lazymcp", name))
+			continue
+		}
+		if preserveBundled && isCodexBundledMCPServer(name, srv) {
+			skipped = append(skipped, fmt.Sprintf("%s: Codex bundled MCP server is preserved in Codex config and not migrated by default", name))
 			continue
 		}
 		if srv.Command == "" {
@@ -512,6 +544,19 @@ func convert(servers map[string]clientServer) (map[string]config.Server, []strin
 	}
 	sort.Strings(skipped)
 	return out, skipped
+}
+
+func isCodexBundledMCPServer(_ string, srv clientServer) bool {
+	command := filepath.ToSlash(srv.Command)
+	if strings.Contains(command, "/Codex.app/Contents/Resources/") {
+		return true
+	}
+	for key := range srv.Env {
+		if strings.HasPrefix(key, "NODE_REPL_") {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeConflicts(path string, incoming map[string]config.Server, overwrite bool) ([]string, error) {

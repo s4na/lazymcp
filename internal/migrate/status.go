@@ -73,7 +73,7 @@ func inspectCodexCLIStatus(path string) StatusSection {
 			Name:      name,
 			Kind:      codexCLIKind(srv),
 			Transport: clientTransport(srv),
-			Status:    clientStatus(srv),
+			Status:    clientStatus(name, srv),
 			Details:   clientDetails(srv),
 		})
 	}
@@ -271,9 +271,12 @@ func clientTransport(srv clientServer) string {
 	return "unknown"
 }
 
-func clientStatus(srv clientServer) string {
+func clientStatus(name string, srv clientServer) string {
 	if isLazyMCPProxy(srv) {
 		return "points to lazymcp"
+	}
+	if isCodexBundledMCPServer(name, srv) {
+		return "preserved"
 	}
 	if srv.Command == "" {
 		if srv.Type != "" || srv.URL != "" {
