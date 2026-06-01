@@ -106,6 +106,7 @@ func TestManagerTracksIdleStoppedAndRespawns(t *testing.T) {
 	}
 
 	waitForState(t, manager, "test", StatusIdleStopped)
+	srv.IdleTimeout = config.Duration(time.Second)
 	if _, callErr := manager.Call(ctx, "test", srv, "ping", json.RawMessage(`{}`), nil); callErr != nil {
 		t.Fatalf("second call: %v", callErr)
 	}

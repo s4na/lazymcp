@@ -42,6 +42,14 @@ Codex にすでに設定されている MCP サーバーをインポートしま
 lazymcp migrate --write
 ```
 
+初回 `tools/list` でもバックエンドを起動したくない場合は、明示的にツール検出を有効にして移行できます。
+この場合、import したローカル stdio MCP サーバーを一度起動し、取得したツール一覧を `tools:` に書き込みます。
+`--discover-tools` はバックエンドプロセスを起動するため、単独では実行できません。`--write` または `--diff` と組み合わせてください。
+
+```bash
+lazymcp migrate --write --discover-tools
+```
+
 現在見えている MCP 設定を確認するには、`status` を使います。
 Codex CLI、Codex App、lazymcp の各設定元ごとに、登録済み server / plugin / connector と、ローカル stdio MCP として import できるかを一覧できます。
 
@@ -212,6 +220,9 @@ lazymcp migrate -y
 
 `--write` はサーバーエントリを安全にマージし、既存の lazymcp 設定を置き換える前にタイムスタンプ付きのバックアップを作成します。
 すでに同じ内容のサーバーが lazymcp 設定に存在する場合は、既存の `tools:` などを保持したまま変更なしとして扱います。
+`--discover-tools` を追加すると、import したローカル stdio MCP サーバーを一度起動して `tools/list` を呼び、検出したツール一覧を `tools:` に保存します。
+`--discover-tools` は `--write` または `--diff` と組み合わせて使います。`--diff --discover-tools` では、検出したツール一覧を差分にだけ反映し、設定ファイルには書き込みません。
+既存の同一サーバーに `tools:` がない場合は検出結果を補完し、既存の `tools:` がある場合はその内容を保持します。
 Codex 側がすでに `lazymcp` プロキシと保持対象の Codex 同梱 MCP だけを指している場合も、移行は成功した no-op になります。
 移行時に lazymcp 設定の中に `lazymcp serve` 自身へのプロキシエントリが見つかった場合は、自己参照を避けるため削除します。
 別内容のサーバー名または名前空間がすでに存在する場合、移行は決定的な競合レポートを出して停止します。
@@ -236,6 +247,7 @@ Codex config の場所を明示したい場合は `--codex-config /path/to/confi
 
 ドライランのレポート、`--diff`、`status` の表示では、トークンやシークレットが出力されないように環境変数、secret 系の引数、secret 系の設定キー、URL credential / secret 系 query をマスクします。
 インポートしたサーバーにはツールスキーマは含まれません。Codex の MCP 設定にはバックエンドの起動コマンドしか含まれていないためです。
+`--discover-tools` を指定した場合は、移行時にバックエンドへ問い合わせてツールスキーマを取得します。
 移行後の `lazymcp serve` は、`tools:` が空のバックエンドについて最初の `tools/list` でバックエンドからツール一覧を検出します。
 検出した一覧は現在の stdio セッション内で保持されます。ツールを完全に遅延起動したい場合や、起動できない環境でも一覧を表示したい場合は、`tools:` エントリを設定ファイルに追加してください。
 

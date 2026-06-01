@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/s4na/lazymcp/internal/config"
+	"github.com/s4na/lazymcp/internal/mcp"
 )
 
 func TestRunCodexDryRunMasksEnvSecrets(t *testing.T) {
@@ -1422,6 +1424,205 @@ GITHUB_TOKEN = "secret-token"
 	}
 }
 
+func TestRunWriteDiscoverToolsWritesDiscoveredTools(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	writeHelperCodexConfig(t, source, "github")
+
+	_, err := Run(Options{
+		Source:        SourceCodex,
+		ConfigPath:    target,
+		SourcePath:    source,
+		Write:         true,
+		DiscoverTools: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	cfg, err := readLazyConfig(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	tools := cfg.Servers["github"].Tools
+	if len(tools) != 1 || tools[0].Name != "ping" {
+		t.Fatalf("tools = %#v, want discovered ping tool", tools)
+	}
+	if tools[0].Description != "Ping from migrate discovery." {
+		t.Fatalf("description = %q", tools[0].Description)
+	}
+	if tools[0].InputSchema["type"] != "object" {
+		t.Fatalf("input schema = %#v, want object schema", tools[0].InputSchema)
+	}
+}
+
+func TestRunDiffDiscoverToolsIncludesDiscoveredTools(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	writeHelperCodexConfig(t, source, "github")
+
+	plan, err := Run(Options{
+		Source:        SourceCodex,
+		ConfigPath:    target,
+		SourcePath:    source,
+		Diff:          true,
+		DiscoverTools: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(plan.Diffs) != 1 {
+		t.Fatalf("diffs = %#v, want one lazymcp config diff", plan.Diffs)
+	}
+	if !strings.Contains(plan.Diffs[0].Diff, "+              name: ping") {
+		t.Fatalf("diff missing discovered tool:\n%s", plan.Diffs[0].Diff)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("target stat error = %v, want no file written", err)
+	}
+}
+
+func TestRunWriteDiscoverToolsFillsExistingEmptyTools(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	writeHelperCodexConfig(t, source, "github")
+	err := os.WriteFile(target, []byte(fmt.Sprintf(`
+servers:
+  github:
+    command: %s
+    args:
+      - -test.run=TestMigrateHelperProcess
+    env:
+      GO_WANT_MIGRATE_HELPER_PROCESS: "1"
+    namespace: github
+    idle_timeout: 5m0s
+    request_timeout: 10m0s
+    tools: []
+`, quoteYAMLString(os.Args[0]))), 0o600)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	_, err = Run(Options{
+		Source:        SourceCodex,
+		ConfigPath:    target,
+		SourcePath:    source,
+		Write:         true,
+		DiscoverTools: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	cfg, err := readLazyConfig(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	tools := cfg.Servers["github"].Tools
+	if len(tools) != 1 || tools[0].Name != "ping" {
+		t.Fatalf("tools = %#v, want existing empty tools filled", tools)
+	}
+}
+
+func TestRunWriteDiscoverToolsPreservesExistingTools(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	writeHelperCodexConfigWithEnv(t, source, "github", map[string]string{"LAZYMCP_FAIL_ON_LIST": "1"})
+	err := os.WriteFile(target, []byte(fmt.Sprintf(`
+servers:
+  github:
+    command: %s
+    args:
+      - -test.run=TestMigrateHelperProcess
+    env:
+      GO_WANT_MIGRATE_HELPER_PROCESS: "1"
+      LAZYMCP_FAIL_ON_LIST: "1"
+    namespace: github
+    idle_timeout: 5m0s
+    request_timeout: 10m0s
+    tools:
+      - name: curated
+        description: Keep this curated schema.
+        input_schema:
+          type: object
+`, quoteYAMLString(os.Args[0]))), 0o600)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	_, err = Run(Options{
+		Source:        SourceCodex,
+		ConfigPath:    target,
+		SourcePath:    source,
+		Write:         true,
+		DiscoverTools: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	cfg, err := readLazyConfig(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	tools := cfg.Servers["github"].Tools
+	if len(tools) != 1 || tools[0].Name != "curated" {
+		t.Fatalf("tools = %#v, want existing curated tools preserved", tools)
+	}
+}
+
+func TestRunWriteOverwriteDiscoverToolsReplacesExistingTools(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	writeHelperCodexConfig(t, source, "github")
+	err := os.WriteFile(target, []byte(fmt.Sprintf(`
+servers:
+  github:
+    command: %s
+    args:
+      - -test.run=TestMigrateHelperProcess
+    env:
+      GO_WANT_MIGRATE_HELPER_PROCESS: "1"
+    namespace: github
+    idle_timeout: 5m0s
+    request_timeout: 10m0s
+    tools:
+      - name: stale
+        description: Replace this stale schema.
+        input_schema:
+          type: object
+`, quoteYAMLString(os.Args[0]))), 0o600)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	_, err = Run(Options{
+		Source:        SourceCodex,
+		ConfigPath:    target,
+		SourcePath:    source,
+		Write:         true,
+		Overwrite:     true,
+		DiscoverTools: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	cfg, err := readLazyConfig(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	tools := cfg.Servers["github"].Tools
+	if len(tools) != 1 || tools[0].Name != "ping" {
+		t.Fatalf("tools = %#v, want stale tools replaced with discovered ping", tools)
+	}
+}
+
 func TestRunWriteRestrictsExistingConfigPermissions(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")
@@ -1646,4 +1847,74 @@ func containsSubstring(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func writeHelperCodexConfig(t *testing.T, path string, name string) {
+	t.Helper()
+	writeHelperCodexConfigWithEnv(t, path, name, nil)
+}
+
+func writeHelperCodexConfigWithEnv(t *testing.T, path string, name string, extraEnv map[string]string) {
+	t.Helper()
+	data := fmt.Sprintf(`
+[mcp_servers.%s]
+command = %q
+args = ["-test.run=TestMigrateHelperProcess"]
+
+[mcp_servers.%s.env]
+GO_WANT_MIGRATE_HELPER_PROCESS = "1"
+`, name, os.Args[0], name)
+	for key, value := range extraEnv {
+		data += fmt.Sprintf("%s = %q\n", key, value)
+	}
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+}
+
+func quoteYAMLString(value string) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
+}
+
+func TestMigrateHelperProcess(t *testing.T) {
+	if os.Getenv("GO_WANT_MIGRATE_HELPER_PROCESS") != "1" {
+		return
+	}
+
+	codec := mcp.NewCodec(os.Stdin, os.Stdout)
+	for {
+		msg, err := codec.Read()
+		if err != nil {
+			os.Exit(0)
+		}
+		switch msg.Method {
+		case "initialize":
+			_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{
+				"protocolVersion": "2024-11-05",
+				"capabilities":    map[string]any{},
+				"serverInfo":      map[string]any{"name": "migrate-helper", "version": "test"},
+			}))
+		case "notifications/initialized":
+		case "tools/list":
+			if os.Getenv("LAZYMCP_FAIL_ON_LIST") == "1" {
+				_ = codec.Write(mcp.NewError(msg.ID, -32000, "forced tools/list failure"))
+				continue
+			}
+			_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{
+				"tools": []map[string]any{
+					{
+						"name":        "ping",
+						"description": "Ping from migrate discovery.",
+						"inputSchema": map[string]any{"type": "object"},
+					},
+				},
+			}))
+		default:
+			_ = codec.Write(mcp.NewError(msg.ID, -32601, "method not found"))
+		}
+	}
 }
