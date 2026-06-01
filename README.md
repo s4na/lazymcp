@@ -44,6 +44,7 @@ lazymcp migrate --write
 
 初回 `tools/list` でもバックエンドを起動したくない場合は、明示的にツール検出を有効にして移行できます。
 この場合、import したローカル stdio MCP サーバーを一度起動し、取得したツール一覧を `tools:` に書き込みます。
+`--discover-tools` はバックエンドプロセスを起動するため、単独では実行できません。`--write` または `--diff` と組み合わせてください。
 
 ```bash
 lazymcp migrate --write --discover-tools
@@ -220,6 +221,7 @@ lazymcp migrate -y
 `--write` はサーバーエントリを安全にマージし、既存の lazymcp 設定を置き換える前にタイムスタンプ付きのバックアップを作成します。
 すでに同じ内容のサーバーが lazymcp 設定に存在する場合は、既存の `tools:` などを保持したまま変更なしとして扱います。
 `--discover-tools` を追加すると、import したローカル stdio MCP サーバーを一度起動して `tools/list` を呼び、検出したツール一覧を `tools:` に保存します。
+`--discover-tools` は `--write` または `--diff` と組み合わせて使います。`--diff --discover-tools` では、検出したツール一覧を差分にだけ反映し、設定ファイルには書き込みません。
 既存の同一サーバーに `tools:` がない場合は検出結果を補完し、既存の `tools:` がある場合はその内容を保持します。
 Codex 側がすでに `lazymcp` プロキシと保持対象の Codex 同梱 MCP だけを指している場合も、移行は成功した no-op になります。
 移行時に lazymcp 設定の中に `lazymcp serve` 自身へのプロキシエントリが見つかった場合は、自己参照を避けるため削除します。
