@@ -1575,6 +1575,54 @@ servers:
 	}
 }
 
+func TestRunWriteOverwriteDiscoverToolsReplacesExistingTools(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	writeHelperCodexConfig(t, source, "github")
+	err := os.WriteFile(target, []byte(fmt.Sprintf(`
+servers:
+  github:
+    command: %s
+    args:
+      - -test.run=TestMigrateHelperProcess
+    env:
+      GO_WANT_MIGRATE_HELPER_PROCESS: "1"
+    namespace: github
+    idle_timeout: 5m0s
+    request_timeout: 10m0s
+    tools:
+      - name: stale
+        description: Replace this stale schema.
+        input_schema:
+          type: object
+`, quoteYAMLString(os.Args[0]))), 0o600)
+	if err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	_, err = Run(Options{
+		Source:        SourceCodex,
+		ConfigPath:    target,
+		SourcePath:    source,
+		Write:         true,
+		Overwrite:     true,
+		DiscoverTools: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	cfg, err := readLazyConfig(target)
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	tools := cfg.Servers["github"].Tools
+	if len(tools) != 1 || tools[0].Name != "ping" {
+		t.Fatalf("tools = %#v, want stale tools replaced with discovered ping", tools)
+	}
+}
+
 func TestRunWriteRestrictsExistingConfigPermissions(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")

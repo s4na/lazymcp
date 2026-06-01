@@ -180,7 +180,8 @@ func discoverTools(opts Options, servers map[string]config.Server) error {
 			existingSrv, ok := existing.Servers[name]
 			if ok && !isLazyConfigServer(existingSrv, opts.ConfigPath) &&
 				sameImportedServerBase(name, existingSrv, srv) &&
-				len(existingSrv.Tools) > 0 {
+				len(existingSrv.Tools) > 0 &&
+				!opts.Overwrite {
 				continue
 			}
 		}
