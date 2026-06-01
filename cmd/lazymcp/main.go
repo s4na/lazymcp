@@ -199,7 +199,7 @@ func newMigrateCommand(configPath *string) *cobra.Command {
 	cmd.PersistentFlags().BoolVar(&opts.Diff, "diff", false, "show the lazymcp and Codex config changes as a unified diff without writing files")
 	cmd.PersistentFlags().BoolVar(&opts.Overwrite, "overwrite", false, "overwrite existing lazymcp server entries")
 	cmd.PersistentFlags().StringVar(&opts.SourcePath, "source-path", "", "source client config path")
-	cmd.PersistentFlags().BoolVar(&opts.DiscoverTools, "discover-tools", false, "start imported stdio MCP servers once and write discovered tools into lazymcp config")
+	cmd.PersistentFlags().BoolVar(&opts.DiscoverTools, "discover-tools", false, "start imported stdio MCP servers once and include discovered tools in the output config")
 	cmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "preview the migration without writing files (default unless --write is set)")
 	cmd.PersistentFlags().BoolVar(&opts.UpdateClient, "register-client", false, "replace the source client MCP settings with the lazymcp proxy after importing")
 	cmd.PersistentFlags().BoolVarP(&yes, "yes", "y", false, "write lazymcp config and update Codex MCP settings")

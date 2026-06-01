@@ -165,12 +165,24 @@ func discoverTools(opts Options, servers map[string]config.Server) error {
 	if timeout == 0 {
 		timeout = defaultToolDiscoveryTimeout
 	}
+	existing, err := readLazyConfig(opts.ConfigPath)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
 	manager := backend.NewManager(io.Discard)
 	defer manager.Shutdown()
 	for _, name := range sortedServerNames(servers) {
 		srv := servers[name]
 		if len(srv.Tools) > 0 {
 			continue
+		}
+		if existing != nil {
+			existingSrv, ok := existing.Servers[name]
+			if ok && !isLazyConfigServer(existingSrv, opts.ConfigPath) &&
+				sameImportedServerBase(name, existingSrv, srv) &&
+				len(existingSrv.Tools) > 0 {
+				continue
+			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		tools, listErr := manager.ListTools(ctx, name, srv, nil)

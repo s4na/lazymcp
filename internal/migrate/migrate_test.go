@@ -1457,6 +1457,33 @@ func TestRunWriteDiscoverToolsWritesDiscoveredTools(t *testing.T) {
 	}
 }
 
+func TestRunDiffDiscoverToolsIncludesDiscoveredTools(t *testing.T) {
+	dir := t.TempDir()
+	source := filepath.Join(dir, "config.toml")
+	target := filepath.Join(dir, "lazymcp.yaml")
+	writeHelperCodexConfig(t, source, "github")
+
+	plan, err := Run(Options{
+		Source:        SourceCodex,
+		ConfigPath:    target,
+		SourcePath:    source,
+		Diff:          true,
+		DiscoverTools: true,
+	})
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(plan.Diffs) != 1 {
+		t.Fatalf("diffs = %#v, want one lazymcp config diff", plan.Diffs)
+	}
+	if !strings.Contains(plan.Diffs[0].Diff, "+              name: ping") {
+		t.Fatalf("diff missing discovered tool:\n%s", plan.Diffs[0].Diff)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("target stat error = %v, want no file written", err)
+	}
+}
+
 func TestRunWriteDiscoverToolsFillsExistingEmptyTools(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")
@@ -1504,7 +1531,7 @@ func TestRunWriteDiscoverToolsPreservesExistingTools(t *testing.T) {
 	dir := t.TempDir()
 	source := filepath.Join(dir, "config.toml")
 	target := filepath.Join(dir, "lazymcp.yaml")
-	writeHelperCodexConfig(t, source, "github")
+	writeHelperCodexConfigWithEnv(t, source, "github", map[string]string{"LAZYMCP_FAIL_ON_LIST": "1"})
 	err := os.WriteFile(target, []byte(fmt.Sprintf(`
 servers:
   github:
@@ -1513,6 +1540,7 @@ servers:
       - -test.run=TestMigrateHelperProcess
     env:
       GO_WANT_MIGRATE_HELPER_PROCESS: "1"
+      LAZYMCP_FAIL_ON_LIST: "1"
     namespace: github
     idle_timeout: 5m0s
     request_timeout: 10m0s
@@ -1775,6 +1803,11 @@ func containsSubstring(values []string, want string) bool {
 
 func writeHelperCodexConfig(t *testing.T, path string, name string) {
 	t.Helper()
+	writeHelperCodexConfigWithEnv(t, path, name, nil)
+}
+
+func writeHelperCodexConfigWithEnv(t *testing.T, path string, name string, extraEnv map[string]string) {
+	t.Helper()
 	data := fmt.Sprintf(`
 [mcp_servers.%s]
 command = %q
@@ -1783,6 +1816,9 @@ args = ["-test.run=TestMigrateHelperProcess"]
 [mcp_servers.%s.env]
 GO_WANT_MIGRATE_HELPER_PROCESS = "1"
 `, name, os.Args[0], name)
+	for key, value := range extraEnv {
+		data += fmt.Sprintf("%s = %q\n", key, value)
+	}
 	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
@@ -1816,6 +1852,10 @@ func TestMigrateHelperProcess(t *testing.T) {
 			}))
 		case "notifications/initialized":
 		case "tools/list":
+			if os.Getenv("LAZYMCP_FAIL_ON_LIST") == "1" {
+				_ = codec.Write(mcp.NewError(msg.ID, -32000, "forced tools/list failure"))
+				continue
+			}
 			_ = codec.Write(mcp.NewResult(msg.ID, map[string]any{
 				"tools": []map[string]any{
 					{
