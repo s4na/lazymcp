@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
+	"github.com/s4na/lazymcp/internal/backend"
 	"github.com/s4na/lazymcp/internal/config"
 	"gopkg.in/yaml.v3"
 )
@@ -23,13 +25,15 @@ const (
 )
 
 type Options struct {
-	Source       Source
-	ConfigPath   string
-	SourcePath   string
-	Write        bool
-	Diff         bool
-	Overwrite    bool
-	UpdateClient bool
+	Source               Source
+	ConfigPath           string
+	SourcePath           string
+	Write                bool
+	Diff                 bool
+	Overwrite            bool
+	UpdateClient         bool
+	DiscoverTools        bool
+	ToolDiscoveryTimeout time.Duration
 }
 
 type Plan struct {
@@ -67,6 +71,8 @@ var nowUTC = func() time.Time {
 	return time.Now().UTC()
 }
 
+const defaultToolDiscoveryTimeout = 30 * time.Second
+
 func Run(opts Options) (*Plan, error) {
 	if opts.ConfigPath == "" {
 		opts.ConfigPath = config.DefaultPath()
@@ -96,6 +102,11 @@ func Run(opts Options) (*Plan, error) {
 	plan.Conflicts = conflicts
 	if len(conflicts) > 0 {
 		return plan, fmt.Errorf("migration has conflicts: %s", strings.Join(conflicts, "; "))
+	}
+	if opts.DiscoverTools {
+		if err := discoverTools(opts, servers); err != nil {
+			return plan, err
+		}
 	}
 	if opts.UpdateClient && len(plan.Blocked) > 0 {
 		return plan, fmt.Errorf("updating the source client would remove unsupported Codex MCP servers: %s", strings.Join(plan.Blocked, "; "))
@@ -147,6 +158,30 @@ func Run(opts Options) (*Plan, error) {
 		}
 	}
 	return plan, nil
+}
+
+func discoverTools(opts Options, servers map[string]config.Server) error {
+	timeout := opts.ToolDiscoveryTimeout
+	if timeout == 0 {
+		timeout = defaultToolDiscoveryTimeout
+	}
+	manager := backend.NewManager(io.Discard)
+	defer manager.Shutdown()
+	for _, name := range sortedServerNames(servers) {
+		srv := servers[name]
+		if len(srv.Tools) > 0 {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		tools, listErr := manager.ListTools(ctx, name, srv, nil)
+		cancel()
+		if listErr != nil {
+			return fmt.Errorf("discover tools for %q: %s", name, listErr.Message)
+		}
+		srv.Tools = tools
+		servers[name] = srv
+	}
+	return nil
 }
 
 func primarySourceFile(sourceFiles []string) string {
@@ -579,7 +614,7 @@ func mergeConflicts(path string, incoming map[string]config.Server, overwrite bo
 		if existingSrv, ok := existing.Servers[name]; ok && isLazyConfigServer(existingSrv, path) {
 			continue
 		}
-		if existingSrv, ok := existing.Servers[name]; ok && !overwrite && !sameImportedServer(name, existingSrv, srv) {
+		if existingSrv, ok := existing.Servers[name]; ok && !overwrite && !canMergeImportedServer(name, existingSrv, srv) {
 			conflicts = append(conflicts, fmt.Sprintf("server name %q already exists", name))
 		}
 		namespace := srv.NamespaceOrName(name)
@@ -798,7 +833,15 @@ func configData(path string, incoming map[string]config.Server, overwrite bool) 
 			continue
 		}
 		if exists && !overwrite {
-			return nil, nil, false, fmt.Errorf("server %q already exists", name)
+			if !canMergeImportedServer(name, existing, srv) {
+				return nil, nil, false, fmt.Errorf("server %q already exists", name)
+			}
+			if len(existing.Tools) == 0 && len(srv.Tools) > 0 {
+				existing.Tools = srv.Tools
+				cfg.Servers[name] = existing
+				changed = true
+			}
+			continue
 		}
 		cfg.Servers[name] = srv
 		changed = true
@@ -840,13 +883,23 @@ func removeLazyConfigServers(cfg *config.Config, configPath string) bool {
 func sameImportedServer(name string, existing, incoming config.Server) bool {
 	existing = normalizedServer(existing)
 	incoming = normalizedServer(incoming)
+	return sameImportedServerBase(name, existing, incoming) &&
+		(len(incoming.Tools) == 0 || toolsEqual(existing.Tools, incoming.Tools))
+}
+
+func canMergeImportedServer(name string, existing, incoming config.Server) bool {
+	existing = normalizedServer(existing)
+	incoming = normalizedServer(incoming)
+	return sameImportedServerBase(name, existing, incoming)
+}
+
+func sameImportedServerBase(name string, existing, incoming config.Server) bool {
 	return existing.Command == incoming.Command &&
 		stringSlicesEqual(existing.Args, incoming.Args) &&
 		stringMapsEqual(existing.Env, incoming.Env) &&
 		existing.NamespaceOrName(name) == incoming.NamespaceOrName(name) &&
 		existing.IdleTimeout == incoming.IdleTimeout &&
-		existing.RequestTimeout == incoming.RequestTimeout &&
-		(len(incoming.Tools) == 0 || toolsEqual(existing.Tools, incoming.Tools))
+		existing.RequestTimeout == incoming.RequestTimeout
 }
 
 func normalizedServer(srv config.Server) config.Server {
